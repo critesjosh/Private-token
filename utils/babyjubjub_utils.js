@@ -1,6 +1,6 @@
 // We cannot use typescript with circomlibjs, so we keep it as a js file (no types declaration file)
-import { buildBabyjub }  from "circomlibjs";
-import { getCurveFromName, Scalar }  from "ffjavascript";
+import { buildBabyjub } from "circomlibjs";
+import { getCurveFromName, Scalar } from "ffjavascript";
 import crypto from 'crypto';
 
 const babyJub = await buildBabyjub();
@@ -45,52 +45,63 @@ function _bigIntToUint8Array(bigInt) {
 
 
 // Utils functions (should be called directly by the dapp)
-export function privateToPublicKey(privateKey){
-    const publicKeyPoint = babyJub.mulPointEscalar(babyJub.Base8,privateKey); // A point on Baby Jubjub : C = (CX, Cy)
-    return {"x":_uint8ArrayToBigInt(babyJub.F.fromMontgomery(babyJub.F.e(publicKeyPoint[0])).reverse()), // fromMontgomery because circomlibjs uses the Montgomery form by default, but we need the Twisted Edwards form in Noir
-            "y":_uint8ArrayToBigInt(babyJub.F.fromMontgomery(babyJub.F.e(publicKeyPoint[1])).reverse())}
+export function privateToPublicKey(privateKey) {
+    const publicKeyPoint = babyJub.mulPointEscalar(babyJub.Base8, privateKey); // A point on Baby Jubjub : C = (CX, Cy)
+    return {
+        "x": _uint8ArrayToBigInt(babyJub.F.fromMontgomery(babyJub.F.e(publicKeyPoint[0])).reverse()), // fromMontgomery because circomlibjs uses the Montgomery form by default, but we need the Twisted Edwards form in Noir
+        "y": _uint8ArrayToBigInt(babyJub.F.fromMontgomery(babyJub.F.e(publicKeyPoint[1])).reverse())
+    }
 }
 
 export function generatePrivateAndPublicKey() {
     const max_value = BigInt('2736030358979909402780800718157159386076813972158567259200215660948447373041'); // max value should be l (https://eips.ethereum.org/EIPS/eip-2494), the order of the big subgroup to avoid modulo bias
     const privateKey = _getRandomBigInt(max_value);
     const publicKey = privateToPublicKey(privateKey);
-    return {"privateKey":privateKey, "publicKey":publicKey};
+    return { "privateKey": privateKey, "publicKey": publicKey };
 }
 
 export function exp_elgamal_encrypt(public_key, plaintext) {  // same notations as in https://en.wikipedia.org/wiki/ElGamal_encryption 
-        // Check if it's a number and an integer in uint40 range
-        if (typeof plaintext === 'number' && Number.isInteger(plaintext) && plaintext >= 0 && plaintext <= 1099511627775) {
-            const max_value = BigInt('2736030358979909402780800718157159386076813972158567259200215660948447373041'); // max value should be l (https://eips.ethereum.org/EIPS/eip-2494), the order of the big subgroup to avoid modulo bias
-            const randomness = _getRandomBigInt(max_value);
-            const C1P = babyJub.mulPointEscalar(babyJub.Base8,randomness);
-            const plain_embedded = babyJub.mulPointEscalar(babyJub.Base8,plaintext);
-            const shared_secret = babyJub.mulPointEscalar([babyJub.F.toMontgomery(_bigIntToUint8Array(public_key.x).reverse()),babyJub.F.toMontgomery(_bigIntToUint8Array(public_key.y).reverse())],randomness);
-            const C2P = babyJub.addPoint(plain_embedded,shared_secret);
-            const C1 = {"x":_uint8ArrayToBigInt(babyJub.F.fromMontgomery(babyJub.F.e(C1P[0])).reverse()),
-                        "y":_uint8ArrayToBigInt(babyJub.F.fromMontgomery(babyJub.F.e(C1P[1])).reverse())};
-            const C2 = {"x":_uint8ArrayToBigInt(babyJub.F.fromMontgomery(babyJub.F.e(C2P[0])).reverse()),
-                        "y":_uint8ArrayToBigInt(babyJub.F.fromMontgomery(babyJub.F.e(C2P[1])).reverse())};
-            return {"C1":C1, "C2": C2, "randomness": randomness}; // randomness should stay private, but we need it as private inputs in the circuit
-        }
-            else {
-                throw new Error("Plain value most be an integer in uint40 range");
-            }
+    // Check if it's a number and an integer in uint40 range
+    if (typeof plaintext === 'number' && Number.isInteger(plaintext) && plaintext >= 0 && plaintext <= 1099511627775) {
+        const max_value = BigInt('2736030358979909402780800718157159386076813972158567259200215660948447373041'); // max value should be l (https://eips.ethereum.org/EIPS/eip-2494), the order of the big subgroup to avoid modulo bias
+        const randomness = _getRandomBigInt(max_value);
+        console.log(randomness.toString(16).length)
+        const C1P = babyJub.mulPointEscalar(babyJub.Base8, randomness);
+        const plain_embedded = babyJub.mulPointEscalar(babyJub.Base8, plaintext);
+        const shared_secret = babyJub.mulPointEscalar([babyJub.F.toMontgomery(_bigIntToUint8Array(public_key.x).reverse()), babyJub.F.toMontgomery(_bigIntToUint8Array(public_key.y).reverse())], randomness);
+        const C2P = babyJub.addPoint(plain_embedded, shared_secret);
+        const C1 = {
+            "x": _uint8ArrayToBigInt(babyJub.F.fromMontgomery(babyJub.F.e(C1P[0])).reverse()),
+            "y": _uint8ArrayToBigInt(babyJub.F.fromMontgomery(babyJub.F.e(C1P[1])).reverse())
+        };
+        const C2 = {
+            "x": _uint8ArrayToBigInt(babyJub.F.fromMontgomery(babyJub.F.e(C2P[0])).reverse()),
+            "y": _uint8ArrayToBigInt(babyJub.F.fromMontgomery(babyJub.F.e(C2P[1])).reverse())
+        };
+        return { "C1": C1, "C2": C2, "randomness": randomness }; // randomness should stay private, but we need it as private inputs in the circuit
+    }
+    else {
+        throw new Error("Plain value most be an integer in uint40 range");
+    }
 }
 
 export function exp_elgamal_decrypt_embedded(private_key, C1, C2) {
-    const shared_secret = babyJub.mulPointEscalar([babyJub.F.toMontgomery(_bigIntToUint8Array(C1.x).reverse()),babyJub.F.toMontgomery(_bigIntToUint8Array(C1.y).reverse())],private_key);
-    const shared_secret_inverse = babyJub.mulPointEscalar(shared_secret,2736030358979909402780800718157159386076813972158567259200215660948447373040n); // Note : this BigInt is equal to l-1, this equivalent here to -1, to take the inverse of shared_secret, because mulPointEscalar only supports positive values for the second argument
-    const plain_embedded = babyJub.addPoint([babyJub.F.toMontgomery(_bigIntToUint8Array(C2.x).reverse()),babyJub.F.toMontgomery(_bigIntToUint8Array(C2.y).reverse())],shared_secret_inverse);
-    return {"x":_uint8ArrayToBigInt(babyJub.F.fromMontgomery(babyJub.F.e(plain_embedded[0])).reverse()),
-            "y":_uint8ArrayToBigInt(babyJub.F.fromMontgomery(babyJub.F.e(plain_embedded[1])).reverse())};
+    const shared_secret = babyJub.mulPointEscalar([babyJub.F.toMontgomery(_bigIntToUint8Array(C1.x).reverse()), babyJub.F.toMontgomery(_bigIntToUint8Array(C1.y).reverse())], private_key);
+    const shared_secret_inverse = babyJub.mulPointEscalar(shared_secret, 2736030358979909402780800718157159386076813972158567259200215660948447373040n); // Note : this BigInt is equal to l-1, this equivalent here to -1, to take the inverse of shared_secret, because mulPointEscalar only supports positive values for the second argument
+    const plain_embedded = babyJub.addPoint([babyJub.F.toMontgomery(_bigIntToUint8Array(C2.x).reverse()), babyJub.F.toMontgomery(_bigIntToUint8Array(C2.y).reverse())], shared_secret_inverse);
+    return {
+        "x": _uint8ArrayToBigInt(babyJub.F.fromMontgomery(babyJub.F.e(plain_embedded[0])).reverse()),
+        "y": _uint8ArrayToBigInt(babyJub.F.fromMontgomery(babyJub.F.e(plain_embedded[1])).reverse())
+    };
 }
 
 export function add_points(P1, P2) { // Used for (homomorphic) addition of baby jubjub (encrypted) points
-    const Psum = babyJub.addPoint([babyJub.F.toMontgomery(_bigIntToUint8Array(P1.x).reverse()),babyJub.F.toMontgomery(_bigIntToUint8Array(P1.y).reverse())],
-            [babyJub.F.toMontgomery(_bigIntToUint8Array(P2.x).reverse()),babyJub.F.toMontgomery(_bigIntToUint8Array(P2.y).reverse())]);
-    return {"x":_uint8ArrayToBigInt(babyJub.F.fromMontgomery(babyJub.F.e(Psum[0])).reverse()),
-            "y":_uint8ArrayToBigInt(babyJub.F.fromMontgomery(babyJub.F.e(Psum[1])).reverse())};
+    const Psum = babyJub.addPoint([babyJub.F.toMontgomery(_bigIntToUint8Array(P1.x).reverse()), babyJub.F.toMontgomery(_bigIntToUint8Array(P1.y).reverse())],
+        [babyJub.F.toMontgomery(_bigIntToUint8Array(P2.x).reverse()), babyJub.F.toMontgomery(_bigIntToUint8Array(P2.y).reverse())]);
+    return {
+        "x": _uint8ArrayToBigInt(babyJub.F.fromMontgomery(babyJub.F.e(Psum[0])).reverse()),
+        "y": _uint8ArrayToBigInt(babyJub.F.fromMontgomery(babyJub.F.e(Psum[1])).reverse())
+    };
 }
 
 export function intToLittleEndianHex(n) { // should take a BigInt and returns a string in little endian hexadecimal, of size 64, to give as input as the Rust script computing the Discrete Log with baby-step giant-step algo

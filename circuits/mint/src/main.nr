@@ -19,8 +19,7 @@ global bjj_basept_y = 1695015079846065771795862556782183455030166316162470778722
 // In this particular case, we are using a zkSNARK only for its succintness property, not the zk property, because total supply is publicly known.
 // The alternative would have been to reimplement Baby JubJub encryption in the EVM onchain which is very gas-expensive and complex.
 fn main(private_key: Field, 
-        randomness1: Field, 
-        randomness2: Field, 
+        randomness: Field, 
         /* Balance_old_me_clear is the clear (i.e decrypted) balance of sender 
         this is computed offchain by solving the DLP with babygiant algorithm, 
         after calling bjj_exp_elgamal_decrypt with his private key */
@@ -48,22 +47,19 @@ fn main(private_key: Field,
     // check that unencrypted balance of sender really corresponds to his encrypted balance
     assert((decoded_value.x == embedded_balance_old_me_clear.x) & (decoded_value.y == embedded_balance_old_me_clear.y)); 
     
-    let balance_new_me_encrypted_computed = bjj_exp_elgamal_encrypt(public_key, balance_old_clear - value, randomness1);
-    // checks that the new encrypted balance of sender is correct
-    assert((balance_new_me_encrypted_computed.0.x==balance_new_encrypted_1.x) & 
-            (balance_new_me_encrypted_computed.0.y==balance_new_encrypted_1.y) & 
-            (balance_new_me_encrypted_computed.1.x==balance_new_encrypted_2.x) & 
-            (balance_new_me_encrypted_computed.1.y==balance_new_encrypted_2.y)); 
+//     let balance_old_encrypted_computed = bjj_exp_elgamal_encrypt(public_key, balance_old_clear, randomness1);
+//     // checks that the old encrypted balance of sender is correct
+//     assert((balance_old_encrypted_computed.0.x==balance_old_encrypted_1.x) & 
+//             (balance_old_encrypted_computed.0.y==balance_old_encrypted_1.y) & 
+//             (balance_old_encrypted_computed.1.x==balance_old_encrypted_2.x) & 
+//             (balance_old_encrypted_computed.1.y==balance_old_encrypted_2.y)); 
     
     // we encrypt the minted value with the minter's public key
-    let value_encrypted = bjj_exp_elgamal_encrypt(public_key, value, randomness2);
-    // addition of the points on Baby Jubjub : this operation is additevely homomorphic for Exponential ElGamal
-    let balance_new_encrypted_computed = (bjj_affine.add(balance_old_encrypted_1, value_encrypted.0),bjj_affine.add(balance_old_encrypted_2, value_encrypted.1));
-    // the circuit outputs the correctly encrypted initial supply
-    assert((balance_new_encrypted_computed.0.x == balance_new_encrypted_1.x) & 
-            (balance_new_encrypted_computed.0.y == balance_new_encrypted_1.y) & 
-            (balance_new_encrypted_computed.1.x == balance_new_encrypted_2.x) & 
-            (balance_new_encrypted_computed.1.y == balance_new_encrypted_2.y)); 
+    let new_balance_encrypted_computed = bjj_exp_elgamal_encrypt(public_key, value + balance_old_clear, randomness);
+    assert((new_balance_encrypted_computed.0.x == balance_new_encrypted_1.x) & 
+            (new_balance_encrypted_computed.0.y == balance_new_encrypted_1.y) & 
+            (new_balance_encrypted_computed.1.x == balance_new_encrypted_2.x) & 
+            (new_balance_encrypted_computed.1.y == balance_new_encrypted_2.y)); 
 }
 
 #[test]
