@@ -36,7 +36,7 @@ contract PrivateToken {
     uint40 public immutable totalSupply;
 
     IERC20 token;
-
+    uint8 public immutable decimals = 2;
     // hash of public key => encrypted balance
     mapping(bytes32 => EncryptedBalance) public balances;
 
@@ -56,14 +56,17 @@ contract PrivateToken {
 
     function deposit(
         address _from,
-        uint40 _amount,
+        uint256 _amount,
         PublicKey _to_key,
         bytes32 _to_address,
         bytes proof_mint,
         EncryptedBalance _newBalance
     ) public {
-        // TODO: adjust amount for decimals
-        require(totalSupply + _amount < type(uint40).max, "Amount is too big");
+        // convert to decimals places. any decimals following 2 are lost
+        // max value is u40 - 1, so 1099511627775. with 2 decimals
+        // that gives us a max supply of ~11 billion erc20 tokens
+        uint40 amount = _amount / 10 ** (token.decimals() - decimals);
+        require(totalSupply + amount < type(uint40).max, "Amount is too big");
         token.transferFrom(_from, this.address, uint256(_amount));
         mint(_to_address, _amount, proof_mint, _to_key, _newBalance);
     }
