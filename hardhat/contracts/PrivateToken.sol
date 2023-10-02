@@ -3,6 +3,7 @@ pragma solidity ^0.8.13;
 
 // import "./PublicKeyInfrastructure.sol";
 import {MintUltraVerifier} from "./mint_plonk_vk.sol";
+import {MintToNewUltraVerifier} from "./mint_to_new_plonk_vk.sol";
 import {TransferUltraVerifier} from "./transfer_plonk_vk.sol";
 import {TransferToNewUltraVerifier} from "./transfer_to_new_plonk_vk.sol";
 import {IERC20} from "./IERC20.sol";
@@ -44,11 +45,13 @@ contract PrivateToken {
 
     constructor(
         address MintVerifierAddress,
+        address MintToNewVerifierAddress,
         address TransferVerifierAddress,
         address TransferToNewVerifierAddress,
         address _token
     ) {
         MintVerifier = MintUltraVerifier(MintVerifierAddress);
+        MintToNewVerifier = MintToNewUltraVerifier(MintToNewVerifierAddress);
         TransferVerifier = TransferUltraVerifier(TransferVerifierAddress);
         TransferToNewVerifier = TransferToNewUltraVerifier(TransferToNewVerifierAddress);
         token = IERC20(_token);
@@ -68,18 +71,43 @@ contract PrivateToken {
         uint40 amount = _amount / 10 ** (token.decimals() - decimals);
         require(totalSupply + amount < type(uint40).max, "Amount is too big");
         token.transferFrom(_from, this.address, uint256(_amount));
-        mint(_to_address, _amount, proof_mint, _to_key, _newBalance);
+        if (balances[_to_address] == 0) {
+            mintToNew(_to_address, _amount, proof_mint, _to_key, _newBalance);
+        } else {
+            mint(_to_address, _amount, proof_mint, _to_key, _newBalance);
+        }
     }
 
-    function _mint(
-        bytes32 minter, // poseidon hash of pub_key. pass as input to save gas
+    function mintToNew(
+        bytes32 _to, // poseidon hash of pub_key. pass as input to save gas
         uint40 amount,
         bytes memory proof_mint,
         PublicKey memory pub_key,
-        EncryptedBalance memory newEncryptedAmount,
-        address recipient
+        EncryptedBalance memory newEncryptedAmount
     ) internal {
-        EncryptedBalance memory oldEncryptedAmount = balances[minter];
+        // #TODO : implement this function
+        bytes32[] memory publicInputs = new bytes32[](7);
+        publicInputs[0] = bytes32(pub_key.X);
+        publicInputs[1] = bytes32(pub_key.Y);
+        publicInputs[2] = bytes32(uint256(amount));
+        publicInputs[3] = bytes32(newEncryptedAmount.C1x);
+        publicInputs[4] = bytes32(newEncryptedAmount.C1y);
+        publicInputs[5] = bytes32(newEncryptedAmount.C2x);
+        publicInputs[6] = bytes32(newEncryptedAmount.C2y);
+        require(MintToNewVerifier.verify(proof_mint, publicInputs), "Mint proof is invalid"); // checks that the initial balance of the deployer is a correct encryption of the initial supply (and the deployer owns the private key corresponding to his registered public key)
+        // calculate the new total encrypted supply offchain, replace existing value (not an increment)
+        balances[_to] = newEncryptedAmount;
+        totalSupply += amount;
+    }
+
+    function _mint(
+        bytes32 _to, // poseidon hash of pub_key. pass as input to save gas
+        uint40 amount,
+        bytes memory proof_mint,
+        PublicKey memory pub_key,
+        EncryptedBalance memory newEncryptedAmount
+    ) internal {
+        EncryptedBalance memory oldEncryptedAmount = balances[_to];
         bytes32[] memory publicInputs = new bytes32[](7);
         publicInputs[0] = bytes32(pub_key.X);
         publicInputs[1] = bytes32(pub_key.Y);
@@ -96,7 +124,6 @@ contract PrivateToken {
         // calculate the new total encrypted supply offchain, replace existing value (not an increment)
         balances[minter] = newEncryptedAmount;
         totalSupply += amount;
-        token.transferFrom(this.address, recipient, uint256(_amount * 10 ** (token.decimals() - decimals)));
     }
 
     function withdraw(
@@ -124,6 +151,7 @@ contract PrivateToken {
         // calculate the new total encrypted supply offchain, replace existing value (not an increment)
         balances[_from] = newEncryptedAmount;
         totalSupply -= _amount;
+        token.transferFrom(this.address, _to, uint256(_amount * 10 ** (token.decimals() - decimals)));
     }
 
     function transfer(
