@@ -76,7 +76,8 @@ contract PrivateToken {
         uint40 amount,
         bytes memory proof_mint,
         PublicKey memory pub_key,
-        EncryptedBalance memory newEncryptedAmount
+        EncryptedBalance memory newEncryptedAmount,
+        address recipient
     ) internal {
         EncryptedBalance memory oldEncryptedAmount = balances[minter];
         bytes32[] memory publicInputs = new bytes32[](7);
@@ -95,6 +96,34 @@ contract PrivateToken {
         // calculate the new total encrypted supply offchain, replace existing value (not an increment)
         balances[minter] = newEncryptedAmount;
         totalSupply += amount;
+        token.transferFrom(this.address, recipient, uint256(_amount * 10 ** (token.decimals() - decimals)));
+    }
+
+    function withdraw(
+        bytes32 _from,
+        address _to,
+        u40 _amount,
+        bytes memory _withdraw_proof,
+        PublicKey memory _pub_key,
+        EncryptedBalance _newEncryptedAmount
+    ) public {
+        EncryptedBalance memory oldEncryptedAmount = balances[_from];
+        bytes32[] memory publicInputs = new bytes32[](7);
+        publicInputs[0] = bytes32(pub_key.X);
+        publicInputs[1] = bytes32(pub_key.Y);
+        publicInputs[2] = bytes32(uint256(_amount));
+        publicInputs[3] = bytes32(oldEncryptedAmount.C1x);
+        publicInputs[4] = bytes32(oldEncryptedAmount.C1y);
+        publicInputs[5] = bytes32(oldEncryptedAmount.C2x);
+        publicInputs[6] = bytes32(oldEncryptedAmount.C2y);
+        publicInputs[7] = bytes32(_newEncryptedAmount.C1x);
+        publicInputs[8] = bytes32(_newEncryptedAmount.C1y);
+        publicInputs[9] = bytes32(_newEncryptedAmount.C2x);
+        publicInputs[10] = bytes32(_newEncryptedAmount.C2y);
+        require(MintVerifier.verify(_withdraw_proof, publicInputs), "Withdraw proof is invalid");
+        // calculate the new total encrypted supply offchain, replace existing value (not an increment)
+        balances[_from] = newEncryptedAmount;
+        totalSupply -= _amount;
     }
 
     function transfer(
