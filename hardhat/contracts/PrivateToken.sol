@@ -54,18 +54,19 @@ contract PrivateToken {
         token = IERC20(_token);
     }
 
-    function deposit(address _from, uint40 _amount, PublicKey _to_key, bytes32 _to_address, bytes proof_mint) public {
+    function deposit(
+        address _from,
+        uint40 _amount,
+        PublicKey _to_key,
+        bytes32 _to_address,
+        bytes proof_mint,
+        EncryptedBalance _newBalance
+    ) public {
         // TODO: adjust amount for decimals
         require(totalSupply + _amount < type(uint40).max, "Amount is too big");
         token.transferFrom(_from, this.address, uint256(_amount));
-        if (balances[_to_address] == 0) {
-            _mint_to_new();
-        } else {
-            _mint();
-        }
+        mint(_to_address, _amount, proof_mint, _to_key, _newBalance);
     }
-
-    function _mint_to_new() {}
 
     function _mint(
         bytes32 minter, // poseidon hash of pub_key. pass as input to save gas

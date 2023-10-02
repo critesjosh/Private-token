@@ -23,12 +23,12 @@ fn main(private_key: Field,
         /* Balance_old_me_clear is the clear (i.e decrypted) balance of sender 
         this is computed offchain by solving the DLP with babygiant algorithm, 
         after calling bjj_exp_elgamal_decrypt with his private key */
-        balance_old_clear: u40,
+        balance_old_clear: Field,
 
         // Public Inputs
 
         public_key: pub Gaffine, 
-        value: pub u40, 
+        value: pub Field, 
         balance_old_encrypted_1: pub Gaffine, 
         balance_old_encrypted_2: pub Gaffine,
         balance_new_encrypted_1: pub Gaffine, 
@@ -71,14 +71,8 @@ fn test_main() {
 
     // public values
     let public_key: Gaffine = bjj_priv_to_pub_key(private_key);
-    let value: u40 = 1000000000000; // the message being encrypted, should be a u40
-    
-    let bjj_affine: AffineCurve = AffineCurve::new(bjj_a, bjj_d, Gaffine::new(bjj_generator_x, bjj_generator_y));
-    // let (C1, C2) = bjj_exp_elgamal_encrypt(public_key, value, randomness);
-    let value_encrypted_to: (Gaffine,Gaffine) = bjj_exp_elgamal_encrypt(public_key, value, randomness);
-    // addition of the points on Baby Jubjub : this operation is additevely homomorphic for Exponential ElGamal
-    // let balance_new_encrypted_computed = (bjj_affine.add(balance_old_encrypted_1, value_encrypted_to.0),bjj_affine.add(balance_old_encrypted_2, value_encrypted_to.1));
-    
+    let value: Field = 1000000000000; // the message being encrypted, should be a u40
+
     // main(private_key, randomness, balance_old_me_clear, public_key,value,balance_old_encrypted_1,balance_old_encrypted_2, balance_new_encrypted_computed.0, balance_new_encrypted_computed.1);  // checks that public_key is derived from private_key and returns encrypted value and most importantly that the encrpyted value, i.e (C1,C2), is correct
 }
 
@@ -90,12 +84,12 @@ fn bjj_priv_to_pub_key(private_key: Field) -> Gaffine
  bjj_affine.mul(private_key, base_pt)
 }
 
-fn bjj_exp_elgamal_encrypt(public_key: Gaffine, plaintext: u40, randomness: Field) -> (Gaffine,Gaffine) // same notations as in https://en.wikipedia.org/wiki/ElGamal_encryption 
+fn bjj_exp_elgamal_encrypt(public_key: Gaffine, plaintext: Field, randomness: Field) -> (Gaffine,Gaffine) // same notations as in https://en.wikipedia.org/wiki/ElGamal_encryption 
 {
  let bjj_affine: AffineCurve = AffineCurve::new(bjj_a, bjj_d, Gaffine::new(bjj_generator_x, bjj_generator_y));
  let base_pt: Gaffine = Gaffine::new(bjj_basept_x, bjj_basept_y);
  let C1: Gaffine = bjj_affine.mul(randomness, base_pt);
- let plain_embedded: Gaffine = bjj_affine.mul(plaintext as Field, base_pt);
+ let plain_embedded: Gaffine = bjj_affine.mul(plaintext, base_pt);
  let shared_secret: Gaffine = bjj_affine.mul(randomness, public_key);
  let C2: Gaffine = bjj_affine.add(shared_secret, plain_embedded);
  (C1,C2)
