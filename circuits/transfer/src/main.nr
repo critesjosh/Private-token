@@ -23,7 +23,7 @@ initiated by from=msg.sender in the contract, so replay attack is impossible)
 */
 fn main(private_key: Field, 
         randomness1: Field, 
-        randomness2: Field, 
+        // randomness2: Field, 
         value: u40, 
         /* Balance_old_me_clear is the clear (i.e decrypted) balance of sender 
         this is computed offchain by solving the DLP with babygiant algorithm, 
@@ -34,14 +34,17 @@ fn main(private_key: Field,
 
         public_key_me: pub Gaffine, 
         public_key_to: pub Gaffine, 
+        account_address: pub Field,
+        fee: pub Field,
         balance_old_me_encrypted_1: pub Gaffine, 
         balance_old_me_encrypted_2: pub Gaffine, 
-        balance_old_to_encrypted_1: pub Gaffine, 
-        balance_old_to_encrypted_2: pub Gaffine,
+        // balance_old_to_encrypted_1: pub Gaffine, 
+        // balance_old_to_encrypted_2: pub Gaffine,
         balance_new_me_encrypted_1: pub Gaffine, 
         balance_new_me_encrypted_2: pub Gaffine, 
-        balance_new_to_encrypted_1: pub Gaffine, 
-        balance_new_to_encrypted_2: pub Gaffine) 
+    //     balance_new_to_encrypted_1: pub Gaffine, 
+    //     balance_new_to_encrypted_2: pub Gaffine
+    ) 
     { 
     let computed_public_key = bjj_priv_to_pub_key(private_key);
     // check that the sender really owns the private key corresponding to his public key
@@ -59,6 +62,10 @@ fn main(private_key: Field,
     */
     assert(value>=1); 
 
+    // TODO: check that the hash of public_key_to is equal to account_address
+    // check that new balance = the balance_old_me_clear - fee
+    // check that the encrypted amount to send + the fee is the amount that is removed from the account
+
     let bjj_affine: AffineCurve = AffineCurve::new(bjj_a, bjj_d, Gaffine::new(bjj_generator_x, bjj_generator_y));
     let base_pt: Gaffine = Gaffine::new(bjj_basept_x, bjj_basept_y);
     let embedded_balance_old_me_clear = bjj_affine.mul(balance_old_me_clear as Field, base_pt);
@@ -73,15 +80,15 @@ fn main(private_key: Field,
             (balance_new_me_encrypted_computed.1.x==balance_new_me_encrypted_2.x) & 
             (balance_new_me_encrypted_computed.1.y==balance_new_me_encrypted_2.y)); 
     
-    let value_encrypted_to = bjj_exp_elgamal_encrypt(public_key_to, value, randomness2);
+    // let value_encrypted_to = bjj_exp_elgamal_encrypt(public_key_to, value, randomness2);
     // addition of the points on Baby Jubjub : this operation is additevely homomorphic for Exponential ElGamal
-    let balance_new_to_encrypted_computed = 
-        (bjj_affine.add(balance_old_to_encrypted_1, value_encrypted_to.0),bjj_affine.add(balance_old_to_encrypted_2, value_encrypted_to.1)); 
-    // checks that the new encrypted balance of receiver is correct
-    assert((balance_new_to_encrypted_computed.0.x==balance_new_to_encrypted_1.x) & 
-            (balance_new_to_encrypted_computed.0.y==balance_new_to_encrypted_1.y) & 
-            (balance_new_to_encrypted_computed.1.x==balance_new_to_encrypted_2.x) & 
-            (balance_new_to_encrypted_computed.1.y==balance_new_to_encrypted_2.y)); 
+    // let balance_new_to_encrypted_computed = 
+    //     (bjj_affine.add(balance_old_to_encrypted_1, value_encrypted_to.0),bjj_affine.add(balance_old_to_encrypted_2, value_encrypted_to.1)); 
+    // // checks that the new encrypted balance of receiver is correct
+    // assert((balance_new_to_encrypted_computed.0.x==balance_new_to_encrypted_1.x) & 
+    //         (balance_new_to_encrypted_computed.0.y==balance_new_to_encrypted_1.y) & 
+    //         (balance_new_to_encrypted_computed.1.x==balance_new_to_encrypted_2.x) & 
+    //         (balance_new_to_encrypted_computed.1.y==balance_new_to_encrypted_2.y)); 
 
 }
 

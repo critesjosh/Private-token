@@ -38,7 +38,7 @@ fn main(private_key: Field,
     let base_pt: Gaffine = Gaffine::new(bjj_basept_x, bjj_basept_y);
     let embedded_balance_old_me_clear = bjj_affine.mul(balance_old_clear as Field, base_pt);
     let decoded_value = bjj_exp_elgamal_decrypt(private_key, (balance_old_encrypted_1,balance_old_encrypted_2));
-    // check that unencrypted balance of sender really corresponds to his encrypted balance
+    // check that unencrypted balance of withdrawer really corresponds to his encrypted balance
     assert((decoded_value.x == embedded_balance_old_me_clear.x) & (decoded_value.y == embedded_balance_old_me_clear.y)); 
     // we encrypt the minted value with the minter's public key
     let new_balance_encrypted_computed = bjj_exp_elgamal_encrypt(public_key, balance_old_clear - value, randomness);
