@@ -9,6 +9,8 @@ You can read the slides presenting the final project [here](https://docs.google.
 
 This project is an implementation of a token on Ethereum with private balances, i.e all the balances are publicly stored on the Ethereum blockchain in an encrypted format, but only the owner of an Ethereum account is able to decrypt their own balance. This is possible thanks to the improved expressiveness allowed by homomorphic encryption on top of zkSNARKs, allowing a party **A** to compute over encrypted data owned by *another* party **B** i.e **A** can add encrpyted balances owned by **B** without needing any knowledge of those balances.
 
+You could increase the privacy of this system by implementing [stealth addresses](https://vitalik.ca/general/2023/01/20/stealth.html). Even with stealth addresses this would be a very easy system to maintain compliance because it is possible to trace transaction histories. If a flagged account sends you funds, you could create a proof that the amount was below a certain threshold. Or you could burn the amount and create a proof that the burned amount == the amount that was sent to you by the suspicious account.
+
 The current model is the following : 
 
 First, a deployer, also called *Central Banker*, should deploy a new Private Token smart contract by minting its initial supply to himself. The deployment actually consists of creating 2 smart contracts : 
