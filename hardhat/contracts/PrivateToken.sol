@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.13;
+pragma solidity ^0.8.20;
 
-// import "./PublicKeyInfrastructure.sol";
-import {TransferUltraVerifier} from "./transfer_plonk_vk.sol";
-import {IERC20} from "./IERC20.sol";
+import {UltraVerifier as ProcessDepositVerifier} from "./process_pending_deposits/plonk_vk.sol";
+import {UltraVerifier as ProcessTransferVerifier} from "./process_pending_transfers/plonk_vk.sol";
+import {UltraVerifier as TransferVerifier} from "./transfer/plonk_vk.sol";
+import {UltraVerifier as WithdrawVerifier} from "./withdraw/plonk_vk.sol";
+
+import {ERC20} from "../node_modules/@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 /**
  * @dev Implementation of PrivateToken.
@@ -53,13 +56,13 @@ contract PrivateToken {
     WithdrawVerifier public immutable WITHDRAW_VERIFIER;
     uint40 public immutable totalSupply;
 
-    IERC20 token;
+    ERC20 token;
     uint8 public immutable decimals = 2;
 
     // hash of public key => encrypted balance
     mapping(bytes32 => EncryptedAmount) public balances;
-    mapping(bytes32 => PendingTransfer[]) public pendingTransfers;
-    mapping(bytes32 => PendingDeposit[]) public pendingDeposits;
+    mapping(bytes32 => PendingTransfer[]) public allPendingTransfersMapping;
+    mapping(bytes32 => PendingDeposit[]) public allPendingDepositsMapping;
 
     // This prevents replay attacks in the transfer fn
     mapping(bytes32 => uint256) public nonce;
@@ -78,20 +81,26 @@ contract PrivateToken {
     event PrivateTransfer(bytes32 indexed to, address indexed from);
 
     /**
-     * @notice
+     * @notice Constructor - setup up verifiers and link to token
      * @dev
-     * @param TransferVerifierAddress
-     * @param _token
+     * @param _processDepositVerifier address of the processDepositVerifier contract
+     * @param _processTransferVerifier address of the processTransferVerifier contract
+     * @param _transferVerifier address of the transferVerifier contract
+     * @param _withdrawVerifier address of the withdrawVerifier contract
+     * @param _token - ERC20 token address
      */
     constructor(
-        address processDepositVerifier,
-        address rocessTransferVerifier,
-        address transferVerifierAddress,
-        address withdrawVerifier,
+        address _processDepositVerifier,
+        address _processTransferVerifier,
+        address _transferVerifier,
+        address _withdrawVerifier,
         address _token
     ) {
-        TransferVerifier = TransferUltraVerifier(TransferVerifierAddress);
-        token = IERC20(_token);
+        PROCESS_DEPOSIT_VERIFIER = ProcessDepositVerifier(_processDepositVerifier);
+        PROCESS_TRANSFER_VERIFIER = ProcessTransferVerifier(_processTransferVerifier);
+        TRANSFER_VERIFIER = TransferVerifier(_transferVerifier);
+        WITHDRAW_VERIFIER = WithdrawVerifier(_withdrawVerifier);
+        token = ERC20(_token);
     }
 
     // TODO: add transferWithRelay and withdrawWithRelay functions and write circuits
@@ -102,21 +111,29 @@ contract PrivateToken {
     // potentially mitigate DDoS attacks against relayers with RLNs
 
     /**
-     * @notice
+     * @notice Deposits the assocated token into the contract to be used privately.
+     *  The deposited amount is pushed to the recepients PendingDeposits queue. The fee
+     *  is the amount that will be paid to the processor of the tx (when processPendingDeposits
+     *  is called)
+     *  This function converts the token to 2 decimal places, the remainder is lost
      * @dev
-     * @param TransferToNewVerifierAddress - ddd
+     * @param _from - sender of the tokens, an ETH address
+     *  @param _amount - amount to deposit
+     *  @param _to - recipient of the tokens, a public key in the system
+     *  @param _fee - (optional, can be 0) amount to pay the processor of the tx (when processPendingDeposits is called)
      */
 
-    function deposit(address _from, uint256 _amount, bytes32 _to, uint256 fee) public {
+    function deposit(address _from, uint256 _amount, bytes32 _to, uint40 _fee) public {
         // convert to decimals places. any decimals following 2 are lost
         // max value is u40 - 1, so 1099511627775. with 2 decimals
         // that gives us a max supply of ~11 billion erc20 tokens
-        uint40 amount = _amount / 10 ** (token.decimals() - decimals);
+        uint40 amount = uint40(_amount / 10 ** (token.decimals() - decimals));
         require(totalSupply + amount < type(uint40).max, "Amount is too big");
-        token.transferFrom(_from, this.address, uint256(_amount));
+        token.transferFrom(_from, address(this), uint256(_amount));
         // keep the fee - users can add a fee to incentivize processPendingDeposits
-        amount = amount - fee;
-        pendingDeposits[_to].push({amount: amount, fee: fee});
+        amount = amount - _fee;
+        PendingDeposit[] storage deposits = allPendingDepositsMapping[_to];
+        deposits.push({amount: amount, fee: _fee});
     }
 
     /**
@@ -145,7 +162,7 @@ contract PrivateToken {
         uint256 _fee,
         PublicKey memory _recipient_pub_key,
         PublicKey memory _sender_pub_key,
-        EnrcyptedAmount calldata _amountToSend,
+        EncryptedAmount calldata _amountToSend,
         EncryptedAmount calldata _senderNewBalance,
         bytes memory _proof_transfer
     ) public {
@@ -160,7 +177,7 @@ contract PrivateToken {
             _fee == 0;
             balances[_to] = _amountToSend;
         } else {
-            pendingTransactions[_to].push({amount: _amountToSend, fee: _fee});
+            allPendingTransfersMapping[_to].push({amount: _amountToSend, fee: _fee});
         }
 
         bytes32[] memory publicInputs = new bytes32[](19);
@@ -183,9 +200,9 @@ contract PrivateToken {
         publicInputs[16] = bytes32(_senderNewBalance.C1y);
         publicInputs[17] = bytes32(_senderNewBalance.C2x);
         publicInputs[18] = bytes32(_senderNewBalance.C2y);
-        require(TransferVerifier.verify(proof_transfer, publicInputs), "Transfer proof is invalid");
+        require(TRANSFER_VERIFIER.verify(_proof_transfer, publicInputs), "Transfer proof is invalid");
 
-        balances[_from] = _myNewBalance;
+        balances[_from] = _senderNewBalance;
         emit PrivateTransfer(_from, _to);
         nonce[_from]++;
     }
@@ -199,15 +216,16 @@ contract PrivateToken {
     function withdraw(
         bytes32 _from,
         address _to,
-        u40 _amount,
+        uint40 _amount,
         bytes memory _withdraw_proof,
         PublicKey memory _pub_key,
-        EncryptedAmount _newEncryptedAmount
+        EncryptedAmount memory _newEncryptedAmount
     ) public {
+        // TODO: add nonce
         EncryptedAmount memory oldEncryptedAmount = balances[_from];
         bytes32[] memory publicInputs = new bytes32[](7);
-        publicInputs[0] = bytes32(pub_key.X);
-        publicInputs[1] = bytes32(pub_key.Y);
+        publicInputs[0] = bytes32(_pub_key.X);
+        publicInputs[1] = bytes32(_pub_key.Y);
         publicInputs[2] = bytes32(uint256(_amount));
         publicInputs[3] = bytes32(oldEncryptedAmount.C1x);
         publicInputs[4] = bytes32(oldEncryptedAmount.C1y);
@@ -217,9 +235,9 @@ contract PrivateToken {
         publicInputs[8] = bytes32(_newEncryptedAmount.C1y);
         publicInputs[9] = bytes32(_newEncryptedAmount.C2x);
         publicInputs[10] = bytes32(_newEncryptedAmount.C2y);
-        require(MintVerifier.verify(_withdraw_proof, publicInputs), "Withdraw proof is invalid");
+        require(WithdrawVerifier.verify(_withdraw_proof, publicInputs), "Withdraw proof is invalid");
         // calculate the new total encrypted supply offchain, replace existing value (not an increment)
-        balances[_from] = newEncryptedAmount;
+        balances[_from] = _newEncryptedAmount;
         totalSupply -= _amount;
         token.transferFrom(this.address, _to, uint256(_amount * 10 ** (token.decimals() - decimals)));
     }
@@ -232,7 +250,7 @@ contract PrivateToken {
      *  balance and the calculated encrypted balances match.
      * @dev
      * @param _proof - proof to verify with the ProcessPendingTransfers circuit
-     * @param _txsToProcess - an array indexes of pendingDeposits to process; max length 4
+     * @param _txsToProcess - an array indexes of PendingDeposits to process; max length 4
      * @param _feeRecipient - the recipient of the fees (typically the processor of these txs)
      * @param _recipient - the recipient of the pending transfers within the system
      * @param _publicKey - the public key of the recipient in the system
@@ -240,7 +258,7 @@ contract PrivateToken {
      */
 
     function processPendingDeposit(
-        bytes32 memory _proof,
+        bytes32 _proof,
         uint8[] memory _txsToProcess,
         address _feeRecipient,
         bytes32 _recipient,
@@ -251,28 +269,29 @@ contract PrivateToken {
         require(numTxsToProcess <= 4, "Too many txs to process");
         uint256 totalFees;
         uint256 totalAmount;
-        EncryptedAmount oldBalance = balances[_recipient];
-        for (i = 0; i++; _numTxsToProcess) {
-            PendingDeposit memory pendingDeposit = sPopCheap(pendingDeposits, i);
-            totalAmount += pendingDeposit.amount;
-            totalFees += pendingDeposit.fee;
+        EncryptedAmount memory oldBalance = balances[_recipient];
+        PendingDeposit[] storage userPendingDepositsArray = allPendingDepositsMapping[_recipient];
+        for (uint8 i = 0; i++; numTxsToProcess) {
+            PendingDeposit memory deposit = sPopCheap(userPendingDepositsArray, _txsToProcess[i]);
+            totalAmount += deposit.amount;
+            totalFees += deposit.fee;
         }
 
         bytes32[] memory publicInputs = new bytes32[](12);
-        publicInputs[0] = bytes32(publicKey.X);
-        publicInputs[1] = bytes32(publicKey.Y);
+        publicInputs[0] = bytes32(_publicKey.X);
+        publicInputs[1] = bytes32(_publicKey.Y);
         publicInputs[2] = bytes32(_recipient);
         publicInputs[3] = bytes32(totalAmount);
         publicInputs[4] = bytes32(oldBalance.C1x);
         publicInputs[5] = bytes32(oldBalance.C1y);
         publicInputs[6] = bytes32(oldBalance.C2x);
         publicInputs[7] = bytes32(oldBalance.C2y);
-        publicInputs[8] = bytes32(newBalance.C1x);
-        publicInputs[9] = bytes32(newBalance.C1y);
-        publicInputs[10] = bytes32(newBalance.C2x);
-        publicInputs[11] = bytes32(newBalance.C2y);
+        publicInputs[8] = bytes32(_newBalance.C1x);
+        publicInputs[9] = bytes32(_newBalance.C1y);
+        publicInputs[10] = bytes32(_newBalance.C2x);
+        publicInputs[11] = bytes32(_newBalance.C2y);
 
-        require(ProcessPendingDepositVerifier(_proof, publicInputs), "Process pending proof is invalid");
+        require(PROCESS_DEPOSIT_VERIFIER(_proof, publicInputs), "Process pending proof is invalid");
         balances[_recipient] = _newBalance;
         token.transfer(_feeRecipient, totalFees);
     }
@@ -284,7 +303,7 @@ contract PrivateToken {
      *  amounts to add. All of the fees are summed and sent to the _feeRecipient
      * @dev
      * @param _proof - proof to verify with the ProcessPendingTransfers circuit
-     * @param _txsToProcess - the indexs of the pendingTransfers to process; max length 4
+     * @param _txsToProcess - the indexs of the userPendingTransfersArray to process; max length 4
      * @param _feeRecipient - the recipient of the fees (typically the processor of these txs)
      * @param _recipient - the recipient of the pending transfers within the system
      * @param _publicKey - the public key of the recipient in the system
@@ -292,7 +311,7 @@ contract PrivateToken {
      */
 
     function processPendingTransfer(
-        bytes32 memory _proof,
+        bytes32 _proof,
         uint8[] memory _txsToProcess,
         address _feeRecipient,
         bytes32 _recipient,
@@ -302,24 +321,25 @@ contract PrivateToken {
         uint8 numTxsToProcess = _txsToProcess.length;
         require(_txsToProcess.length <= 4, "Too many txs to process");
         uint256 totalFees;
-        EncryptedAmount oldBalance = balances[_recipient];
-        EncryptedAmount[] encryptedAmounts = new EncryptedAmount[](numTxsToProcess);
+        EncryptedAmount memory oldBalance = balances[_recipient];
+        EncryptedAmount[] memory encryptedAmounts = new EncryptedAmount[](numTxsToProcess);
 
         bytes32[] memory publicInputs = new bytes32[](35);
-        publicInputs[0] = bytes32(publicKey.X);
-        publicInputs[1] = bytes32(publicKey.Y);
+        publicInputs[0] = bytes32(_publicKey.X);
+        publicInputs[1] = bytes32(_publicKey.Y);
         publicInputs[2] = bytes32(_recipient);
         publicInputs[3] = bytes32(encryptedAmounts.amount.C1x);
         publicInputs[4] = bytes32(oldBalance.C1x);
         publicInputs[5] = bytes32(oldBalance.C1y);
         publicInputs[6] = bytes32(oldBalance.C2x);
         publicInputs[7] = bytes32(oldBalance.C2y);
-        publicInputs[8] = bytes32(newBalance.C1x);
-        publicInputs[9] = bytes32(newBalance.C1y);
-        publicInputs[10] = bytes32(newBalance.C2x);
-        publicInputs[11] = bytes32(newBalance.C2y);
+        publicInputs[8] = bytes32(_newBalance.C1x);
+        publicInputs[9] = bytes32(_newBalance.C1y);
+        publicInputs[10] = bytes32(_newBalance.C2x);
+        publicInputs[11] = bytes32(_newBalance.C2y);
 
-        for (i = 0; i++; numTxsToProcess) {
+        PendingTransfer[] storage pendingTransfers = allPendingTransfersMapping[_recipient];
+        for (uint8 i = 0; i++; numTxsToProcess) {
             // note that the sPopCheap changes the order of the array,
             // so _txsToProcess[i] should take that into account when choosing indexes
             PendingTransfer memory pendingTransfer = sPopCheap(pendingTransfers, _txsToProcess[i]);
@@ -327,46 +347,41 @@ contract PrivateToken {
             publicInputs.push(pendingTransfer.amount.C1y);
             publicInputs.push(pendingTransfer.amount.C2x);
             publicInputs.push(pendingTransfer.amount.C2x);
-            totalFees += pendingTransaction.fee;
+            totalFees += pendingTransfer.fee;
         }
 
-        require(ProcessPendingVerifier(proofs[i], publicInputs), "Process pending proof is invalid");
-        balances[_recipient] = newBalance;
+        require(PROCESS_TRANSFER_VERIFIER(_proof, publicInputs), "Process pending proof is invalid");
+        balances[_recipient] = _newBalance;
         token.transfer(_feeRecipient, totalFees);
     }
 
-    /**
-     * @notice
-     * @dev
-     * @param
-     */
     // from here: https://github.com/cryptofinlabs/cryptofin-solidity/blob/master/contracts/array-utils/AddressArrayUtils.sol
 
-    function sPopCheap(PendingTransfer[] storage pendingTransfers, uint256 index) internal returns (PendingTransfer) {
-        uint256 length = A.length;
+    function sPopCheap(PendingTransfer[] storage transfers, uint256 index) internal returns (PendingTransfer memory) {
+        uint256 length = transfers.length;
         if (index >= length) {
             revert("Error: index out of bounds");
         }
-        PendingTransfer entry = A[index];
+        PendingTransfer memory entry = transfers[index];
         if (index != length - 1) {
-            A[index] = A[length - 1];
-            delete A[length - 1];
+            transfers[index] = transfers[length - 1];
+            delete transfers[length - 1];
         }
-        A.length--;
+        transfers.length--;
         return entry;
     }
 
-    function sPopCheap(PendingDeposit[] storage pendingDeposits, uint256 index) internal returns (PendingDeposit) {
-        uint256 length = A.length;
+    function sPopCheap(PendingDeposit[] storage deposits, uint256 index) internal returns (PendingDeposit memory) {
+        uint256 length = deposits.length;
         if (index >= length) {
             revert("Error: index out of bounds");
         }
-        PendingDeposit entry = A[index];
+        PendingDeposit memory entry = deposits[index];
         if (index != length - 1) {
-            A[index] = A[length - 1];
-            delete A[length - 1];
+            deposits[index] = deposits[length - 1];
+            delete deposits[length - 1];
         }
-        A.length--;
+        deposits.length--;
         return entry;
     }
 }
