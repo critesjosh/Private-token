@@ -1,5 +1,5 @@
 [package]
-name = "process_pending_txs"
+name = "process_pending_transers"
 type = "bin"
 authors = [""]
 compiler_version = "0.12.0"

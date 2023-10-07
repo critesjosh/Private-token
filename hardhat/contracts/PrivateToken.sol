@@ -5,7 +5,6 @@ pragma solidity ^0.8.13;
 import {MintUltraVerifier} from "./mint_plonk_vk.sol";
 import {MintToNewUltraVerifier} from "./mint_to_new_plonk_vk.sol";
 import {TransferUltraVerifier} from "./transfer_plonk_vk.sol";
-import {TransferToNewUltraVerifier} from "./transfer_to_new_plonk_vk.sol";
 import {IERC20} from "./IERC20.sol";
 
 /**
@@ -29,9 +28,15 @@ contract PrivateToken {
     // debiting the senders account in the first tx and doing the addtion in another allows
     // the send to always succeed. at worst the claim of the token would fail if multiple people
     // try to update simultaneously, but at the tx doesn't fail
-    struct PendingTransaction {
+    struct PendingTransfer {
         EncryptedAmount amount;
-        bytes32 pubEncryptionKeyHash;
+        // add a fee to incentivize someone to process the pending tx
+        // otherwise leave as 0 and the recipient can process the tx themselves at cost
+        uint256 fee;
+    }
+
+    struct PendingDeposit {
+        uint256 amount;
         // add a fee to incentivize someone to process the pending tx
         // otherwise leave as 0 and the recipient can process the tx themselves at cost
         uint256 fee;
@@ -49,7 +54,6 @@ contract PrivateToken {
 
     MintUltraVerifier public immutable MintVerifier;
     TransferUltraVerifier public immutable TransferVerifier;
-    TransferToNewUltraVerifier public immutable TransferToNewVerifier;
     uint40 public immutable totalSupply;
 
     IERC20 token;
@@ -57,8 +61,8 @@ contract PrivateToken {
 
     // hash of public key => encrypted balance
     mapping(bytes32 => EncryptedAmount) public balances;
-
-    mapping(bytes32 => pendingTransactions[]) public pendingTransactions;
+    mapping(bytes32 => PendingTransfer[]) public pendingTransfers;
+    mapping(bytes32 => PendingDeposits[]) public pendingDeposits;
 
     // This prevents replay attacks in the transfer fn
     mapping(bytes32 => uint256) public nonce;
@@ -68,20 +72,26 @@ contract PrivateToken {
         The transfer fn debits the senders balance by the amount sent.
         The sender encrypts the amount with the receivers public key
 
-        The processPendingPendingTransactions fn takes a batch of PendingTransactions, and 
+        The processPendingTransfer fn takes a batch of PendingTransfers, and 
         does computes the updates for the homonorphic addition of the encrypted 
         amounts to the receivers and updates the recievers encrypted balances.
 
     */
-    PendingTransaction[] public pendingTransactions;
 
     event PrivateTransfer(bytes32 indexed to, address indexed from);
 
+    /**
+     * @notice
+     * @dev
+     * @param MintVerifierAddress
+     * @param MintToNewVerifierAddress
+     * @param TransferVerifierAddress
+     * @param _token
+     */
     constructor(
         address MintVerifierAddress,
         address MintToNewVerifierAddress,
         address TransferVerifierAddress,
-        address TransferToNewVerifierAddress,
         address _token
     ) {
         MintVerifier = MintUltraVerifier(MintVerifierAddress);
@@ -94,78 +104,148 @@ contract PrivateToken {
     // TODO: add transferWithRelay and withdrawWithRelay functions and write circuits
     // the idea is to be able to incentivize other people to submit txs for your from their
     // ETH accounts, so you dont doxx yourself by sending txs from your ETH account
+    // relayFee can be public, recipient can be ETH address
+    // need to update circuits
+    // potentially mitigate DDoS attacks against relayers with RLNs
 
-    function deposit(
-        address _from,
-        uint256 _amount,
-        PublicKey _to_key,
-        bytes32 _to_address,
-        bytes proof_mint,
-        EncryptedAmount _newBalance,
-        uint256 fee
-    ) public {
+    /**
+     * @notice
+     * @dev
+     * @param TransferToNewVerifierAddress - ddd
+     */
+
+    function deposit(address _from, uint256 _amount, bytes32 _to, uint256 fee) public {
         // convert to decimals places. any decimals following 2 are lost
         // max value is u40 - 1, so 1099511627775. with 2 decimals
         // that gives us a max supply of ~11 billion erc20 tokens
         uint40 amount = _amount / 10 ** (token.decimals() - decimals);
         require(totalSupply + amount < type(uint40).max, "Amount is too big");
         token.transferFrom(_from, this.address, uint256(_amount));
-        // keep the fee - users can add a fee to incentivize processPendingTransfers
+        // keep the fee - users can add a fee to incentivize processPendingDeposits
         amount = amount - fee;
-        if (balances[_to_address] == 0) {
-            mintToNew(_to_address, _amount, proof_mint, _to_key, _newBalance);
+        pendingDeposits[_to].push({amount: amount, fee: fee});
+    }
+
+    // function mintToNew(
+    //     bytes32 _to, // poseidon hash of pub_key. pass as input to save gas
+    //     uint40 amount,
+    //     bytes memory proof_mint,
+    //     PublicKey memory pub_key,
+    //     EncryptedAmount memory newEncryptedAmount
+    // ) internal {
+    //     // #TODO : implement this function
+    //     bytes32[] memory publicInputs = new bytes32[](7);
+    //     publicInputs[0] = bytes32(pub_key.X);
+    //     publicInputs[1] = bytes32(pub_key.Y);
+    //     publicInputs[2] = bytes32(uint256(amount));
+    //     publicInputs[3] = bytes32(newEncryptedAmount.C1x);
+    //     publicInputs[4] = bytes32(newEncryptedAmount.C1y);
+    //     publicInputs[5] = bytes32(newEncryptedAmount.C2x);
+    //     publicInputs[6] = bytes32(newEncryptedAmount.C2y);
+    //     require(MintToNewVerifier.verify(proof_mint, publicInputs), "Mint proof is invalid"); // checks that the initial balance of the deployer is a correct encryption of the initial supply (and the deployer owns the private key corresponding to his registered public key)
+    //     // calculate the new total encrypted supply offchain, replace existing value (not an increment)
+    //     balances[_to] = newEncryptedAmount;
+    //     totalSupply += amount;
+    // }
+
+    // function _mint(
+    //     bytes32 _to, // poseidon hash of pub_key. pass as input to save gas
+    //     uint40 amount,
+    //     bytes memory proof_mint,
+    //     PublicKey memory pub_key,
+    //     EncryptedAmount memory newEncryptedAmount
+    // ) internal {
+    //     EncryptedAmount memory oldEncryptedAmount = balances[_to];
+    //     bytes32[] memory publicInputs = new bytes32[](7);
+    //     publicInputs[0] = bytes32(pub_key.X);
+    //     publicInputs[1] = bytes32(pub_key.Y);
+    //     publicInputs[2] = bytes32(uint256(amount));
+    //     publicInputs[3] = bytes32(oldEncryptedAmount.C1x);
+    //     publicInputs[4] = bytes32(oldEncryptedAmount.C1y);
+    //     publicInputs[5] = bytes32(oldEncryptedAmount.C2x);
+    //     publicInputs[6] = bytes32(oldEncryptedAmount.C2y);
+    //     publicInputs[7] = bytes32(newEncryptedAmount.C1x);
+    //     publicInputs[8] = bytes32(newEncryptedAmount.C1y);
+    //     publicInputs[9] = bytes32(newEncryptedAmount.C2x);
+    //     publicInputs[10] = bytes32(newEncryptedAmount.C2y);
+    //     require(MintVerifier.verify(proof_mint, publicInputs), "Mint proof is invalid"); // checks that the initial balance of the deployer is a correct encryption of the initial supply (and the deployer owns the private key corresponding to his registered public key)
+    //     // calculate the new total encrypted supply offchain, replace existing value (not an increment)
+    //     balances[minter] = newEncryptedAmount;
+    //     totalSupply += amount;
+    // }
+
+    /**
+     * @notice This functions transfers an encrypted amount of tokens to the recipient (_to).
+     *  If the sender is sending to an account with a 0 balance, they can omit the fee, as the funds
+     *  will be directly added to their account. Otherwise a fee can be specified to incentivize
+     *  processing of the tx by an unknown third party (see processPendingTranfer). This is required
+     *  two account cannot simultaneously update the encrypted balance of the recipient. Having a pending
+     *  transfer queue allows the sender to always succeed in debiting their account, and the recipient
+     *  receiving the funds.
+     * @dev
+     * @param _to - recipient of the tokens
+     * @param _from - sender of the tokens
+     * @param _fee - (optional, can be 0) amount to pay the processor of the tx (when processPendingTransfers is called)
+     *  if there is no fee supplied, the recipient can process it themselves
+     * @param _recipient_pub_key - public key of the recipient in the system
+     * @param _sender_pub_key - public key of the sender in the system
+     * @param _amountToSend - amount to send, encrypted with the recipients public key
+     * @param _senderNewBalance - sender's new balance, minus the amount sent and the fee
+     * @param _proof_transfer - proof
+     */
+
+    function transfer(
+        bytes32 _to,
+        bytes32 _from,
+        uint256 _fee,
+        PublicKey memory _recipient_pub_key,
+        PublicKey memory _sender_pub_key,
+        EnrcyptedAmount calldata _amountToSend,
+        EncryptedAmount calldata _senderNewBalance,
+        bytes memory _proof_transfer
+    ) public {
+        EncryptedAmount memory oldBalance = balances[_from];
+        EncryptedAmount memory receiverBalance = balances[_to];
+
+        bytes32[] memory publicInputs = new bytes32[](19);
+        publicInputs[0] = bytes32(_sender_pub_key.X);
+        publicInputs[1] = bytes32(_sender_pub_key.Y);
+        publicInputs[2] = bytes32(_recipient_pub_key.X);
+        publicInputs[3] = bytes32(_recipient_pub_key.Y);
+        publicInputs[4] = bytes32(_to);
+        publicInputs[5] = bytes32(_fee);
+        publicInputs[6] = bytes32(nonce[_from]);
+        publicInputs[7] = bytes32(oldBalance.C1x);
+        publicInputs[8] = bytes32(oldBalance.C1y);
+        publicInputs[9] = bytes32(oldBalance.C2x);
+        publicInputs[10] = bytes32(oldBalance.C2y);
+        publicInputs[11] = bytes32(_amountToSend.C1x);
+        publicInputs[12] = bytes32(_amountToSend.C1y);
+        publicInputs[13] = bytes32(_amountToSend.C2x);
+        publicInputs[14] = bytes32(_amountToSend.C2y);
+        publicInputs[15] = bytes32(_senderNewBalance.C1x);
+        publicInputs[16] = bytes32(_senderNewBalance.C1y);
+        publicInputs[17] = bytes32(_senderNewBalance.C2x);
+        publicInputs[18] = bytes32(_senderNewBalance.C2y);
+        require(TransferVerifier.verify(proof_transfer, publicInputs), "Transfer proof is invalid");
+
+        if (
+            receiverBalance.Cx1 == 0 && receiverBalance.Cx2 == 0 && receiverBalance.Cy1 == 0 && receiverBalance.Cy2 == 0
+        ) {
+            balances[_to] = _amountToSend;
         } else {
-            mint(_to_address, _amount, proof_mint, _to_key, _newBalance);
+            pendingTransactions[_to].push({amount: _amountToSend, fee: _fee});
         }
+        balances[_from] = _myNewBalance;
+        emit PrivateTransfer(_from, _to);
+        nonce[_from]++;
     }
 
-    function mintToNew(
-        bytes32 _to, // poseidon hash of pub_key. pass as input to save gas
-        uint40 amount,
-        bytes memory proof_mint,
-        PublicKey memory pub_key,
-        EncryptedAmount memory newEncryptedAmount
-    ) internal {
-        // #TODO : implement this function
-        bytes32[] memory publicInputs = new bytes32[](7);
-        publicInputs[0] = bytes32(pub_key.X);
-        publicInputs[1] = bytes32(pub_key.Y);
-        publicInputs[2] = bytes32(uint256(amount));
-        publicInputs[3] = bytes32(newEncryptedAmount.C1x);
-        publicInputs[4] = bytes32(newEncryptedAmount.C1y);
-        publicInputs[5] = bytes32(newEncryptedAmount.C2x);
-        publicInputs[6] = bytes32(newEncryptedAmount.C2y);
-        require(MintToNewVerifier.verify(proof_mint, publicInputs), "Mint proof is invalid"); // checks that the initial balance of the deployer is a correct encryption of the initial supply (and the deployer owns the private key corresponding to his registered public key)
-        // calculate the new total encrypted supply offchain, replace existing value (not an increment)
-        balances[_to] = newEncryptedAmount;
-        totalSupply += amount;
-    }
-
-    function _mint(
-        bytes32 _to, // poseidon hash of pub_key. pass as input to save gas
-        uint40 amount,
-        bytes memory proof_mint,
-        PublicKey memory pub_key,
-        EncryptedAmount memory newEncryptedAmount
-    ) internal {
-        EncryptedAmount memory oldEncryptedAmount = balances[_to];
-        bytes32[] memory publicInputs = new bytes32[](7);
-        publicInputs[0] = bytes32(pub_key.X);
-        publicInputs[1] = bytes32(pub_key.Y);
-        publicInputs[2] = bytes32(uint256(amount));
-        publicInputs[3] = bytes32(oldEncryptedAmount.C1x);
-        publicInputs[4] = bytes32(oldEncryptedAmount.C1y);
-        publicInputs[5] = bytes32(oldEncryptedAmount.C2x);
-        publicInputs[6] = bytes32(oldEncryptedAmount.C2y);
-        publicInputs[7] = bytes32(newEncryptedAmount.C1x);
-        publicInputs[8] = bytes32(newEncryptedAmount.C1y);
-        publicInputs[9] = bytes32(newEncryptedAmount.C2x);
-        publicInputs[10] = bytes32(newEncryptedAmount.C2y);
-        require(MintVerifier.verify(proof_mint, publicInputs), "Mint proof is invalid"); // checks that the initial balance of the deployer is a correct encryption of the initial supply (and the deployer owns the private key corresponding to his registered public key)
-        // calculate the new total encrypted supply offchain, replace existing value (not an increment)
-        balances[minter] = newEncryptedAmount;
-        totalSupply += amount;
-    }
+    /**
+     * @notice TODO
+     * @dev
+     * @param
+     */
 
     function withdraw(
         bytes32 _from,
@@ -195,163 +275,139 @@ contract PrivateToken {
         token.transferFrom(this.address, _to, uint256(_amount * 10 ** (token.decimals() - decimals)));
     }
 
-    function transfer(
-        bytes32 _to,
-        bytes32 _from,
-        // TODO: get these from the contract
-        // EncryptedAmount calldata EncryptedAmountOldMe,
-        // EncryptedAmount calldata EncryptedAmountOldTo,
-        EncryptedAmount calldata EncryptedAmountNewMe,
-        // EncryptedAmount calldata EncryptedAmountNewTo,
-        bytes memory proof_transfer,
-        EnrcyptedAmount calldata _amountToSend,
-        uint256 _fee
+    /**
+     * @notice the circuit processing this takes in a fixes number of pending transactions.
+     *  It will take up to 4 at a time (TODO: research how big this num should this be?).
+     *  The circuit checks that the publicKey and recipient match. it encrypts the totalAmount
+     *  and adds it to the recipients encrypted balance. It checks that the provided encrypted
+     *  balance and the calculated encrypted balances match.
+     * @dev
+     * @param _proof - proof to verify with the ProcessPendingTransfers circuit
+     * @param _numTxsToProcess - number of pending transactions to process from pendingTransfers
+     * @param _feeRecipient - the recipient of the fees (typically the processor of these txs)
+     * @param _recipient - the recipient of the pending transfers within the system
+     * @param _publicKey - the public key of the recipient in the system
+     * @param _newBalance - the new balance of the recipient after processing the pending transfers
+     */
+
+    function processPendingDeposit(
+        bytes32 memory _proof,
+        uint256 _numTxsToProcess,
+        address _feeRecipient,
+        bytes32 _recipient,
+        PublicKey memory _publicKey,
+        EncryptedAmount calldata _newBalance
     ) public {
-        EncryptedAmount memory EncryptedAmountOldMeNow = balances[_from];
-
-        pendingTransactions[_to].push({amount: _amountToSend, pubEncryptionKeyHash: _to, fee: _fee});
-        pendingendingTransactionPot += _fee;
-
-        require(
-            EncryptedAmountOldToNow.C1x == EncryptedAmountOldTo.C1x
-                && EncryptedAmountOldToNow.C1y == EncryptedAmountOldTo.C1y
-                && EncryptedAmountOldToNow.C2x == EncryptedAmountOldTo.C2x
-                && EncryptedAmountOldToNow.C2y == EncryptedAmountOldTo.C2y
-                && EncryptedAmountOldMeNow.C1x == EncryptedAmountOldMe.C1x
-                && EncryptedAmountOldMeNow.C1y == EncryptedAmountOldMe.C1y
-                && EncryptedAmountOldMeNow.C2x == EncryptedAmountOldMe.C2x
-                && EncryptedAmountOldMeNow.C2y == EncryptedAmountOldMe.C2y
-        ); // this require is at the top of the transfer function, in order to limit gas spent in case of accidental front-running - front-running attack issue is already deterred thanks to the assert(value>=1) constraint inside the circuits (see comments in transfer/src/main.nr)
-        // require(msg.sender != to, "Cannot transfer to self");
-        // PublicKey memory registeredKeyMe = PKI.getRegistredKey(msg.sender);
-        // PublicKey memory registeredKeyTo = PKI.getRegistredKey(to);
-        // require(registeredKeyMe.X + registeredKeyMe.Y != 0, "Sender has not registered a Public Key yet");
-        // require(registeredKeyTo.X + registeredKeyTo.Y != 0, "Receiver has not registered a Public Key yet");
-        // require(
-        //     EncryptedAmountOldMe.C1x + EncryptedAmountOldMe.C1y + EncryptedAmountOldMe.C1y
-        //         + EncryptedAmountOldMe.C2y != 0,
-        //     "Sender has not received tokens yet"
-        // ); // this should never overflow because 4*p<type(uint256).max
-
-        bool receiverAlreadyReceived = (
-            EncryptedAmountOldTo.C1x + EncryptedAmountOldTo.C1y + EncryptedAmountOldTo.C1y + EncryptedAmountOldTo.C2y
-                != 0
-        ); // this should never overflow because 4*p<type(uint256).max
-
-        if (receiverAlreadyReceived) {
-            // TODO: add nonce
-
-            bytes32[] memory publicInputs = new bytes32[](20);
-            publicInputs[0] = bytes32(registeredKeyMe.X);
-            publicInputs[1] = bytes32(registeredKeyMe.Y);
-
-            publicInputs[2] = bytes32(registeredKeyTo.X);
-            publicInputs[3] = bytes32(registeredKeyTo.Y);
-
-            publicInputs[4] = bytes32(EncryptedAmountOldMeNow.C1x);
-            publicInputs[5] = bytes32(EncryptedAmountOldMeNow.C1y);
-            publicInputs[6] = bytes32(EncryptedAmountOldMeNow.C2x);
-            publicInputs[7] = bytes32(EncryptedAmountOldMeNow.C2y);
-            publicInputs[8] = bytes32(_to);
-            publicInputs[9] = bytes32(_fee);
-            publicInputs[10] = bytes32(_amountToSend.C1x);
-            publicInputs[11] = bytes32(_amountToSend.C1y);
-            publicInputs[12] = bytes32(_amountToSend.C2x);
-            publicInputs[13] = bytes32(_amountToSend.C2y);
-
-            publicInputs[14] = bytes32(EncryptedAmountNewMe.C1x);
-            publicInputs[15] = bytes32(EncryptedAmountNewMe.C1y);
-            publicInputs[16] = bytes32(EncryptedAmountNewMe.C2x);
-            publicInputs[17] = bytes32(EncryptedAmountNewMe.C2y);
-
-            // publicInputs[16] = bytes32(EncryptedAmountNewTo.C1x);
-            // publicInputs[17] = bytes32(EncryptedAmountNewTo.C1y);
-            // publicInputs[18] = bytes32(EncryptedAmountNewTo.C2x);
-            // publicInputs[19] = bytes32(EncryptedAmountNewTo.C2y);
-
-            require(TransferVerifier.verify(proof_transfer, publicInputs), "Transfer proof is invalid");
-        } else {
-            // TODO: add nonce
-
-            bytes32[] memory publicInputs = new bytes32[](16);
-            publicInputs[0] = bytes32(registeredKeyMe.X);
-            publicInputs[1] = bytes32(registeredKeyMe.Y);
-
-            publicInputs[2] = bytes32(registeredKeyTo.X);
-            publicInputs[3] = bytes32(registeredKeyTo.Y);
-
-            publicInputs[4] = bytes32(EncryptedAmountOldMeNow.C1x);
-            publicInputs[5] = bytes32(EncryptedAmountOldMeNow.C1y);
-            publicInputs[6] = bytes32(EncryptedAmountOldMeNow.C2x);
-            publicInputs[7] = bytes32(EncryptedAmountOldMeNow.C2y);
-
-            publicInputs[8] = bytes32(EncryptedAmountNewMe.C1x);
-            publicInputs[9] = bytes32(EncryptedAmountNewMe.C1y);
-            publicInputs[10] = bytes32(EncryptedAmountNewMe.C2x);
-            publicInputs[11] = bytes32(EncryptedAmountNewMe.C2y);
-
-            publicInputs[12] = bytes32(_to);
-            publicInputs[13] = bytes32(_fee);
-
-            require(
-                TransferToNewVerifier.verify(proof_transfer, publicInputs), "Transfer to new address proof is invalid"
-            );
+        uint256 totalFees;
+        uint256 totalAmount;
+        EncryptedAmount oldBalance = balances[_recipient];
+        for (i = 0; i++; _numTxsToProcess) {
+            PendingDeposit memory pendingDeposit = sPopCheap(pendingDeposits, i);
+            totalAmount += pendingDeposit.amount;
+            totalFees += pendingDeposit.fee;
         }
-        balances[_from] = EncryptedAmountNewMe;
-        balances[_to] = EncryptedAmountNewTo;
-        emit PrivateTransfer(_from, _to);
+
+        bytes32[] memory publicInputs = new bytes32[](12);
+        publicInputs[0] = bytes32(publicKey.X);
+        publicInputs[1] = bytes32(publicKey.Y);
+        publicInputs[2] = bytes32(_recipient);
+        publicInputs[3] = bytes32(totalAmount);
+        publicInputs[4] = bytes32(oldBalance.C1x);
+        publicInputs[5] = bytes32(oldBalance.C1y);
+        publicInputs[6] = bytes32(oldBalance.C2x);
+        publicInputs[7] = bytes32(oldBalance.C2y);
+        publicInputs[8] = bytes32(newBalance.C1x);
+        publicInputs[9] = bytes32(newBalance.C1y);
+        publicInputs[10] = bytes32(newBalance.C2x);
+        publicInputs[11] = bytes32(newBalance.C2y);
+
+        require(ProcessPendingDepositVerifier(proofs[i], publicInputs), "Process pending proof is invalid");
+        balances[_recipient] = newBalance;
+        token.transfer(_feeRecipient, totalFees);
     }
 
-    function processPendingPendingTransaction(
-        // the number of proofs passed is the number of PendingTransactions to process
-        // the index of the proof in the array is the index of the PendingTransaction to process
-        // from pendingTransactions
-        bytes32[] memory _proofs,
-        address _feeRecipient,
-        byres32 _recipient,
-        PublicKey memory _publicKey,
-        EncryptedAmount calldata EncryptedAmountNewTo
-    ) {
-        for (i = 0; i++; proofs.length) {
-            PendingTransaction memory pendingTransaction = sPopCheap(pendingTransactions, i); // pendingTransactions[recipient][i];
-            uint256 fee = pendingTransaction.fee;
-            EncryptedAmount oldBalance = balances[pendingTransaction.pubEncryptionKeyHash];
+    /**
+     * @notice the circuit processing this takes in a fixes number of pending transactions.
+     *  It will take up to 4 at a time (TODO: research how big this num should this be?). The circuit adds all of the encrypted amounts sent
+     *  and then checks that the _newBalance is the sum of the old balance and the sum of the
+     *  amounts to add. All of the fees are summed and sent to the _feeRecipient
+     * @dev
+     * @param _proof - proof to verify with the ProcessPendingTransfers circuit
+     * @param _numTxsToProcess - number of pending transactions to process from pendingTransfers
+     * @param _feeRecipient - the recipient of the fees (typically the processor of these txs)
+     * @param _recipient - the recipient of the pending transfers within the system
+     * @param _publicKey - the public key of the recipient in the system
+     * @param _newBalance - the new balance of the recipient after processing the pending transfers
+     */
 
-            bytes32[] memory publicInputs = new bytes32[](15);
-            publicInputs[0] = bytes32(publicKey.X);
-            publicInputs[1] = bytes32(publicKey.Y);
-            publicInputs[2] = bytes32(pendingTransaction.pubEncryptionKeyHash);
-            publicInputs[3] = bytes32(pendingTransaction.amount.C1x);
-            publicInputs[4] = bytes32(pendingTransaction.amount.C1y);
-            publicInputs[5] = bytes32(pendingTransaction.amount.C2x);
-            publicInputs[6] = bytes32(pendingTransaction.amount.C2y);
-            publicInputs[7] = bytes32(oldBalance.C1x);
-            publicInputs[8] = bytes32(oldBalance.C1y);
-            publicInputs[9] = bytes32(oldBalance.C2x);
-            publicInputs[10] = bytes32(oldBalance.C2y);
-            publicInputs[11] = bytes32(EncryptedAmountNewTo.C1x);
-            publicInputs[12] = bytes32(EncryptedAmountNewTo.C1y);
-            publicInputs[13] = bytes32(EncryptedAmountNewTo.C2x);
-            publicInputs[14] = bytes32(EncryptedAmountNewTo.C2y);
-            ProcessPendingVerifier(proofs[i], publicInputs);
-            EncryptedAmount memory EncryptedAmountOldTo = balances[pendingTransaction.pubEncryptionKeyHash];
-            EncryptedAmount memory EncryptedAmountNewTo = EncryptedAmountOldTo;
-            balances[pendingTransaction.pubEncryptionKeyHash] = EncryptedAmountNewTo;
+    function processPendingTransfer(
+        bytes32 memory _proof,
+        uint256 _numTxsToProcess,
+        address _feeRecipient,
+        bytes32 _recipient,
+        PublicKey memory _publicKey,
+        EncryptedAmount calldata _newBalance
+    ) {
+        uint256 totalFees;
+        EncryptedAmount oldBalance = balances[_recipient];
+        EncryptedAmount[] encryptedAmounts = new EncryptedAmount[](numTxsToProcess);
+
+        bytes32[] memory publicInputs = new bytes32[](35);
+        publicInputs[0] = bytes32(publicKey.X);
+        publicInputs[1] = bytes32(publicKey.Y);
+        publicInputs[2] = bytes32(_recipient);
+        publicInputs[3] = bytes32(encryptedAmounts.amount.C1x);
+        publicInputs[4] = bytes32(oldBalance.C1x);
+        publicInputs[5] = bytes32(oldBalance.C1y);
+        publicInputs[6] = bytes32(oldBalance.C2x);
+        publicInputs[7] = bytes32(oldBalance.C2y);
+        publicInputs[8] = bytes32(newBalance.C1x);
+        publicInputs[9] = bytes32(newBalance.C1y);
+        publicInputs[10] = bytes32(newBalance.C2x);
+        publicInputs[11] = bytes32(newBalance.C2y);
+
+        for (i = 0; i++; numTxsToProcess) {
+            PendingTransfer memory pendingTransfer = sPopCheap(pendingTransfers, i);
+            publicInputs.push(pendingTransfer.amount.C1x);
+            publicInputs.push(pendingTransfer.amount.C1y);
+            publicInputs.push(pendingTransfer.amount.C2x);
+            publicInputs.push(pendingTransfer.amount.C2x);
+            totalFees += pendingTransaction.fee;
         }
-        token.transfer(_feeRecipient, fee);
+
+        require(ProcessPendingVerifier(proofs[i], publicInputs), "Process pending proof is invalid");
+        balances[_recipient] = newBalance;
+        token.transfer(_feeRecipient, totalFees);
     }
 }
 
+/**
+ * @notice
+ * @dev
+ * @param
+ */
 // from here: https://github.com/cryptofinlabs/cryptofin-solidity/blob/master/contracts/array-utils/AddressArrayUtils.sol
-function sPopCheap(PendingTransaction[] storage pendingTransaction, uint256 index)
-    internal
-    returns (PendingTransaction)
-{
+
+function sPopCheap(PendingTransfer[] storage pendingTransfers, uint256 index) internal returns (PendingTransfer) {
     uint256 length = A.length;
     if (index >= length) {
         revert("Error: index out of bounds");
     }
-    PendingTransaction entry = A[index];
+    PendingTransfer entry = A[index];
+    if (index != length - 1) {
+        A[index] = A[length - 1];
+        delete A[length - 1];
+    }
+    A.length--;
+    return entry;
+}
+
+function sPopCheap(PendingDeposit[] storage pendingDeposits, uint256 index) internal returns (PendingDeposit) {
+    uint256 length = A.length;
+    if (index >= length) {
+        revert("Error: index out of bounds");
+    }
+    PendingDeposit entry = A[index];
     if (index != length - 1) {
         A[index] = A[length - 1];
         delete A[length - 1];

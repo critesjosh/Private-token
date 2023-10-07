@@ -22,8 +22,7 @@ is different from receiver (a nonce variable is not needed in our case because t
 initiated by from=msg.sender in the contract, so replay attack is impossible)
 */
 fn main(private_key: Field, 
-        randomness1: Field, 
-        // randomness2: Field, 
+        randomness: Field, 
         value: u40, 
         /* Balance_old_me_clear is the clear (i.e decrypted) balance of sender 
         this is computed offchain by solving the DLP with babygiant algorithm, 
@@ -32,23 +31,22 @@ fn main(private_key: Field,
 
         // Public inputs
 
-        public_key_me: pub Gaffine, 
-        public_key_to: pub Gaffine, 
+        sender_pub_key: pub Gaffine, 
+        recipient_pub_key: pub Gaffine, 
         account_address: pub Field,
-        fee: pub Field,
+        fee: pub u40,
+        nonce: pub Field,
         balance_old_me_encrypted_1: pub Gaffine, 
-        balance_old_me_encrypted_2: pub Gaffine, 
-        // balance_old_to_encrypted_1: pub Gaffine, 
-        // balance_old_to_encrypted_2: pub Gaffine,
+        balance_old_me_encrypted_2: pub Gaffine,
+        encrypted_amount_1: pub Gaffine,
+        encrypted_amount_2: pub Gaffine,
         balance_new_me_encrypted_1: pub Gaffine, 
         balance_new_me_encrypted_2: pub Gaffine, 
-    //     balance_new_to_encrypted_1: pub Gaffine, 
-    //     balance_new_to_encrypted_2: pub Gaffine
     ) 
     { 
     let computed_public_key = bjj_priv_to_pub_key(private_key);
     // check that the sender really owns the private key corresponding to his public key
-    assert((public_key_me.x == computed_public_key.x) & (public_key_me.y == computed_public_key.y));
+    assert((sender_pub_key.x == computed_public_key.x) & (sender_pub_key.y == computed_public_key.y));
     // the sender must have sufficient balance
     assert(value<=balance_old_me_clear); 
     /* this is to deter potential front-running issue: ref https://crypto.stanford.edu/~buenz/papers/zether.pdf §3.1. 
@@ -63,8 +61,7 @@ fn main(private_key: Field,
     assert(value>=1); 
 
     // TODO: check that the hash of public_key_to is equal to account_address
-    // check that new balance = the balance_old_me_clear - fee
-    // check that the encrypted amount to send + the fee is the amount that is removed from the account
+    assert(std::hash::poseidon::bn254::hash_2([recipient_pub_key.x, recipient_pub_key.y]) == account_address);
 
     let bjj_affine: AffineCurve = AffineCurve::new(bjj_a, bjj_d, Gaffine::new(bjj_generator_x, bjj_generator_y));
     let base_pt: Gaffine = Gaffine::new(bjj_basept_x, bjj_basept_y);
@@ -73,24 +70,19 @@ fn main(private_key: Field,
     // check that unencrypted balance of sender really corresponds to his encrypted balance
     assert((decoded_value.x == embedded_balance_old_me_clear.x) & (decoded_value.y == embedded_balance_old_me_clear.y)); 
 
-    let balance_new_me_encrypted_computed = bjj_exp_elgamal_encrypt(public_key_me, balance_old_me_clear - value, randomness1);
+    let balance_new_me_encrypted_computed = bjj_exp_elgamal_encrypt(sender_pub_key, balance_old_me_clear - value - fee, randomness);
     // checks that the new encrypted balance of sender is correct
     assert((balance_new_me_encrypted_computed.0.x==balance_new_me_encrypted_1.x) & 
             (balance_new_me_encrypted_computed.0.y==balance_new_me_encrypted_1.y) & 
             (balance_new_me_encrypted_computed.1.x==balance_new_me_encrypted_2.x) & 
             (balance_new_me_encrypted_computed.1.y==balance_new_me_encrypted_2.y)); 
-    
-    // let value_encrypted_to = bjj_exp_elgamal_encrypt(public_key_to, value, randomness2);
-    // addition of the points on Baby Jubjub : this operation is additevely homomorphic for Exponential ElGamal
-    // let balance_new_to_encrypted_computed = 
-    //     (bjj_affine.add(balance_old_to_encrypted_1, value_encrypted_to.0),bjj_affine.add(balance_old_to_encrypted_2, value_encrypted_to.1)); 
-    // // checks that the new encrypted balance of receiver is correct
-    // assert((balance_new_to_encrypted_computed.0.x==balance_new_to_encrypted_1.x) & 
-    //         (balance_new_to_encrypted_computed.0.y==balance_new_to_encrypted_1.y) & 
-    //         (balance_new_to_encrypted_computed.1.x==balance_new_to_encrypted_2.x) & 
-    //         (balance_new_to_encrypted_computed.1.y==balance_new_to_encrypted_2.y)); 
-
-}
+    // check that the amount being transferred is correctly encrypted
+    let encrypted_amount_computed = bjj_exp_elgamal_encrypt(recipient_pub_key, value, randomness);
+    assert((encrypted_amount_computed.0.x == encrypted_amount_1.x) &
+            (encrypted_amount_computed.0.y == encrypted_amount_1.y) &
+            (encrypted_amount_computed.1.x == encrypted_amount_2.x) &
+            (encrypted_amount_computed.1.y == encrypted_amount_2.y));
+    }
 
 // Because of a bug in Noir 10.3, this test will cause a stack overflow error, but you can check that it passes via `nargo prove` instead of `nargo test`: the values inside Prover.toml are strictly equivalent to this test
 #[test]
@@ -110,8 +102,8 @@ fn test_main() {
     let balance_new_me_encrypted : (Gaffine,Gaffine) = bjj_exp_elgamal_encrypt(public_key_me, 9900, randomness1);
     let balance_new_to_encrypted : (Gaffine,Gaffine) = bjj_exp_elgamal_encrypt(public_key_to, 142, 1391605116707840153256607813912547565986654451413670922768018807428594876790+randomness2);
 
-    main(private_key, randomness1, randomness2, value, balance_old_me_clear, public_key_me, public_key_to, balance_old_me_encrypted.0, balance_old_me_encrypted.1, balance_old_to_encrypted.0,
-     balance_old_to_encrypted.1, balance_new_me_encrypted.0, balance_new_me_encrypted.1, balance_new_to_encrypted.0,  balance_new_to_encrypted.1);
+  //  main(private_key, randomness1, randomness2, value, balance_old_me_clear, public_key_me, public_key_to, balance_old_me_encrypted.0, balance_old_me_encrypted.1, balance_old_to_encrypted.0,
+   //  balance_old_to_encrypted.1, balance_new_me_encrypted.0, balance_new_me_encrypted.1, balance_new_to_encrypted.0,  balance_new_to_encrypted.1);
 }
 
 fn bjj_priv_to_pub_key(private_key: Field) -> Gaffine

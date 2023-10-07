@@ -1,0 +1,7 @@
+[package]
+name = "process_pending_deposits"
+type = "bin"
+authors = [""]
+compiler_version = "0.12.0"
+
+[dependencies]

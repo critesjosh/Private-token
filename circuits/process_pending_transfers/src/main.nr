@@ -24,29 +24,36 @@ initiated by from=msg.sender in the contract, so replay attack is impossible)
 fn main(// All Public inputs, this can be executed by anyone
         public_key_to: pub Gaffine, 
         account_address: pub Field,
-        value_encrypted_to_1: pub Gaffine,
-        value_encrypted_to_2: pub Gaffine,
         balance_old_to_encrypted_1: pub Gaffine, 
         balance_old_to_encrypted_2: pub Gaffine,
         balance_new_to_encrypted_1: pub Gaffine, 
-        balance_new_to_encrypted_2: pub Gaffine
+        balance_new_to_encrypted_2: pub Gaffine,
+        encrypted_values: pub [Gaffine; 8],
     ) { 
 
     // check that new balance = the balance_old_me_clear - fee
 
-    assert(std::hash::poseidon::bn254::hash_2([public_key_to.x, public_key_to.y]) == account_address, "account_address is not the hash of public_key_to");
+    assert(std::hash::poseidon::bn254::hash_2([public_key_to.x, public_key_to.y]) == account_address);
 
     let bjj_affine: AffineCurve = AffineCurve::new(bjj_a, bjj_d, Gaffine::new(bjj_generator_x, bjj_generator_y));
     
+    let mut encrypted_value_sum = (encrypted_values[0], encrypted_values[1]);
+
+    for i in 1..3 {
+        let mut s = i*2;
+        if(encrypted_values[s].x as Field != 0){
+            encrypted_value_sum = (bjj_affine.add(encrypted_value_sum.0, encrypted_values[s]),bjj_affine.add(encrypted_value_sum.1, encrypted_values[s+1]));
+        }
+    }
+
     // addition of the points on Baby Jubjub : this operation is additevely homomorphic for Exponential ElGamal
     let balance_new_to_encrypted_computed = 
-        (bjj_affine.add(balance_old_to_encrypted_1, value_encrypted_to_1),bjj_affine.add(balance_old_to_encrypted_2, value_encrypted_to_2)); 
+        (bjj_affine.add(balance_old_to_encrypted_1, encrypted_value_sum.0),bjj_affine.add(balance_old_to_encrypted_2, encrypted_value_sum.1)); 
     // checks that the new encrypted balance of receiver is correct
     assert((balance_new_to_encrypted_computed.0.x==balance_new_to_encrypted_1.x) & 
             (balance_new_to_encrypted_computed.0.y==balance_new_to_encrypted_1.y) & 
             (balance_new_to_encrypted_computed.1.x==balance_new_to_encrypted_2.x) & 
             (balance_new_to_encrypted_computed.1.y==balance_new_to_encrypted_2.y)); 
-
 }
 
 // Because of a bug in Noir 10.3, this test will cause a stack overflow error, but you can check that it passes via `nargo prove` instead of `nargo test`: the values inside Prover.toml are strictly equivalent to this test

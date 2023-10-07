@@ -21,17 +21,17 @@ async function main() {
     console.log(`y = "0x${initial_balance_enc.C2.y.toString(16)}"\n`)
     console.log('randomness1 = ', `"0x${initial_balance_enc.randomness.toString(16)}"\n`)
 
-    const amount_enc = babyjubjubUtils.exp_elgamal_encrypt(pub_key, 10);
+    // const amount_enc = babyjubjubUtils.exp_elgamal_encrypt(pub_key, 10);
 
-    console.log("[balance_old_encrypted_1]")
-    console.log(`x = "0x${initial_balance_enc.C1.x.toString(16)}"`)
-    console.log(`y = "0x${initial_balance_enc.C1.y.toString(16)}"\n`)
-    console.log("[balance_old_encrypted_2]")
-    console.log(`x = "0x${initial_balance_enc.C2.x.toString(16)}"`)
-    console.log(`y = "0x${initial_balance_enc.C2.y.toString(16)}"\n`)
-    console.log('randomness1 = ', `"0x${initial_balance_enc.randomness.toString(16)}"\n`)
+    // console.log("[balance_old_encrypted_1]")
+    // console.log(`x = "0x${initial_balance_enc.C1.x.toString(16)}"`)
+    // console.log(`y = "0x${initial_balance_enc.C1.y.toString(16)}"\n`)
+    // console.log("[balance_old_encrypted_2]")
+    // console.log(`x = "0x${initial_balance_enc.C2.x.toString(16)}"`)
+    // console.log(`y = "0x${initial_balance_enc.C2.y.toString(16)}"\n`)
+    // console.log('randomness1 = ', `"0x${initial_balance_enc.randomness.toString(16)}"\n`)
 
-    const new_balance_enc = babyjubjubUtils.exp_elgamal_encrypt(pub_key, 110);
+    const new_balance_enc = babyjubjubUtils.exp_elgamal_encrypt(pub_key, 90);
 
     console.log("[balance_new_encrypted_1]")
     console.log(`x = "0x${new_balance_enc.C1.x.toString(16)}"`)
