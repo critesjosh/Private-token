@@ -74,6 +74,9 @@ contract PrivateToken {
     // TODO: update how nonces are calculated, use a hash or something
     mapping(bytes32 => bytes32) public nonce;
 
+    // account can be locked and controlled by a contract 
+    mapping(bytes32 => address) public lockedBy;
+
     /*
         A PendingTransaction is added to this array when transfer is called.
         The transfer fn debits the senders balance by the amount sent.
@@ -184,6 +187,8 @@ contract PrivateToken {
         EncryptedAmount calldata _senderNewBalance,
         bytes memory _proof_transfer
     ) public {
+        address lockedByAddress = lockedBy[_sender_pub_key];
+        require( lockedByAddress == address(0) || lockedByAddress == msg.sender, "account is locked to another account");
         EncryptedAmount memory oldBalance = balances[_from];
         EncryptedAmount memory receiverBalance = balances[_to];
 
@@ -239,6 +244,8 @@ contract PrivateToken {
         PublicKey memory _pub_key,
         EncryptedAmount memory _newEncryptedAmount
     ) public {
+        address lockedByAddress = lockedBy[_pub_key];
+        require( lockedByAddress == address(0) || lockedByAddress == msg.sender, "account is locked to another account");
         // TODO: add nonce
         EncryptedAmount memory oldEncryptedAmount = balances[_from];
         bytes32[] memory publicInputs = new bytes32[](7);
@@ -405,4 +412,17 @@ contract PrivateToken {
         deposits.length--;
         return entry;
     }
+
+    // the contract this is locked to must call unlock to give control back to this contract 
+    // locked contracts cannot transfer or withdraw funds
+    function lock(bytes32 publicKey, addrws lockTo) public {
+          lockedBy[publicKey] = lockTo;
+          verifier.verify(proof,  publicInputs);
+    }
+
+    function unlock(bytes32 publicKey) public {
+        require(msg.sender == lockedBy[publicKey], "wrong sender");
+        lockedBy[publicKey] = address(0);
+}
+
 }
