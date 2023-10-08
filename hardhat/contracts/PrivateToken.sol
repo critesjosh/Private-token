@@ -149,6 +149,7 @@ contract PrivateToken {
         token.transferFrom(_from, address(this), uint256(_amount));
         // keep the fee - users can add a fee to incentivize processPendingDeposits
         amount = amount - _fee;
+        // TODO: updpate this to handle the mapping
         allPendingDepositsMapping[_to].push(PendingDeposit(amount, _fee));
         totalSupply += amount;
     }
@@ -288,6 +289,7 @@ contract PrivateToken {
         uint256 totalAmount;
         EncryptedAmount memory oldBalance = balances[_recipient];
         PendingDeposit[] storage userPendingDepositsArray = allPendingDepositsMapping[_recipient];
+        // TODO: updpate this to handle the mapping
         for (uint8 i = 0; i++; numTxsToProcess) {
             PendingDeposit memory deposit = sPopCheap(userPendingDepositsArray, _txsToProcess[i]);
             totalAmount += deposit.amount;
@@ -355,6 +357,8 @@ contract PrivateToken {
         publicInputs[11] = bytes32(_newBalance.C2y);
 
         PendingTransfer[] storage pendingTransfers = allPendingTransfersMapping[_recipient];
+
+        // TODO: updpate this to handle the mapping
         for (uint8 i = 0; i++; numTxsToProcess) {
             // note that the sPopCheap changes the order of the array,
             // so _txsToProcess[i] should take that into account when choosing indexes
