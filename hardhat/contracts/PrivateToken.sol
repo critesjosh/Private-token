@@ -415,6 +415,8 @@ contract PrivateToken {
 
     // the contract this is locked to must call unlock to give control back to this contract 
     // locked contracts cannot transfer or withdraw funds
+
+// TODO: add relayer fee
     function lock(bytes32 publicKey, addrws lockTo) public {
           lockedBy[publicKey] = lockTo;
           verifier.verify(proof,  publicInputs);
