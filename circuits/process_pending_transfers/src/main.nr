@@ -22,8 +22,6 @@ is different from receiver (a nonce variable is not needed in our case because t
 initiated by from=msg.sender in the contract, so replay attack is impossible)
 */
 fn main(// All Public inputs, this can be executed by anyone
-        public_key_to: pub Gaffine, 
-        account_address: pub Field,
         balance_old_to_encrypted_1: pub Gaffine, 
         balance_old_to_encrypted_2: pub Gaffine,
         balance_new_to_encrypted_1: pub Gaffine, 
@@ -32,8 +30,6 @@ fn main(// All Public inputs, this can be executed by anyone
     ) { 
 
     // check that new balance = the balance_old_me_clear - fee
-
-    assert(std::hash::poseidon::bn254::hash_2([public_key_to.x, public_key_to.y]) == account_address);
 
     let bjj_affine: AffineCurve = AffineCurve::new(bjj_a, bjj_d, Gaffine::new(bjj_generator_x, bjj_generator_y));
     
