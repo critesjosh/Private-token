@@ -125,6 +125,14 @@ export function intToLittleEndianHex(n) { // should take a BigInt and returns a 
     return littleEndian.padEnd(64, '0');
 }
 
+
+export function packPublicKey(publicKey) {
+    return babyJub.packPoint(publicKey);
+}
+
+export function unpackPoint(point) {
+    return babyJub.unpackPoint(point);
+}
 // Tests (Uncomment and then run `node babyjubjub_utils.js` to test)
 /*
 const {privateKey, publicKey} = generatePrivateAndPublicKey();

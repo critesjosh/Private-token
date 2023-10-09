@@ -44,11 +44,12 @@ contract PrivateToken {
         uint256 fee;
     }
 
-    struct PublicKey {
-        // #TODO : We could pack those in a single uint256 to save storage costs (for e.g using circomlibjs library to pack points on BabyJubjub)
-        uint256 X;
-        uint256 Y;
-    } // The Public Key should be a point on Baby JubJub elliptic curve : checks must be done offchain before registering to ensure that X<p and Y<p and (X,Y) is on the curve
+    //
+    // struct PublicKey {
+    //     // We could pack those in a single uint256 to save storage costs (for e.g using circomlibjs library to pack points on BabyJubjub)
+    //     uint256 X;
+    //     uint256 Y;
+    // } // The Public Key should be a point on Baby JubJub elliptic curve : checks must be done offchain before registering to ensure that X<p and Y<p and (X,Y) is on the curve
     // p = 21888242871839275222246405745257275088548364400416034343698204186575808495617 < 2**254
 
     ProcessDepositVerifier public immutable PROCESS_DEPOSIT_VERIFIER;
@@ -61,7 +62,9 @@ contract PrivateToken {
     uint256 public immutable SOURCE_TOKEN_DECIMALS;
     uint8 public immutable decimals = 2;
 
-    // hash of public key => encrypted balance
+    // packed public key => encrypted balance
+    // packed using this algo: https://github.com/iden3/circomlibjs/blob/4f094c5be05c1f0210924a3ab204d8fd8da69f49/src/babyjub.js#L97
+    // unpack (in circuit) using this algo: https://github.com/iden3/circomlibjs/blob/4f094c5be05c1f0210924a3ab204d8fd8da69f49/src/babyjub.js#L108
     mapping(bytes32 => EncryptedAmount) public balances;
 
     // hash of public key => the key for the allPendingTransfersMapping
@@ -135,9 +138,9 @@ contract PrivateToken {
      *  This function converts the token to 2 decimal places, the remainder is lost
      * @dev
      * @param _from - sender of the tokens, an ETH address
-     *  @param _amount - amount to deposit
-     *  @param _to - recipient of the tokens, a public key in the system
-     *  @param _fee - (optional, can be 0) amount to pay the processor of the tx (when processPendingDeposits is called)
+     * @param _amount - amount to deposit
+     * @param _to - the packed public key of the recipient in the system
+     * @param _fee - (optional, can be 0) amount to pay the processor of the tx (when processPendingDeposits is called)
      */
 
     function deposit(address _from, uint256 _amount, bytes32 _to, uint40 _fee) public {
@@ -163,12 +166,10 @@ contract PrivateToken {
      *  transfer queue allows the sender to always succeed in debiting their account, and the recipient
      *  receiving the funds.
      * @dev
-     * @param _to - recipient of the tokens
-     * @param _from - sender of the tokens
+     * @param _to - the packed public key of the recipient in the system
+     * @param _from - the packed public key of the sender in the system
      * @param _fee - (optional, can be 0) amount to pay the processor of the tx (when processPendingTransfers is called)
      *  if there is no fee supplied, the recipient can process it themselves
-     * @param _recipient_pub_key - public key of the recipient in the system
-     * @param _sender_pub_key - public key of the sender in the system
      * @param _amountToSend - amount to send, encrypted with the recipients public key
      * @param _senderNewBalance - sender's new balance, minus the amount sent and the fee
      * @param _proof_transfer - proof
@@ -178,8 +179,6 @@ contract PrivateToken {
         bytes32 _to,
         bytes32 _from,
         uint256 _fee,
-        PublicKey memory _recipient_pub_key,
-        PublicKey memory _sender_pub_key,
         EncryptedAmount calldata _amountToSend,
         EncryptedAmount calldata _senderNewBalance,
         bytes memory _proof_transfer
@@ -198,14 +197,11 @@ contract PrivateToken {
             allPendingTransfersMapping[_to].push(PendingTransfer(_amountToSend, _fee, block.timestamp));
         }
 
-        bytes32[] memory publicInputs = new bytes32[](19);
-        publicInputs[0] = bytes32(_sender_pub_key.X);
-        publicInputs[1] = bytes32(_sender_pub_key.Y);
-        publicInputs[2] = bytes32(_recipient_pub_key.X);
-        publicInputs[3] = bytes32(_recipient_pub_key.Y);
+        bytes32[] memory publicInputs = new bytes32[]();
         publicInputs[4] = bytes32(_to);
         publicInputs[5] = bytes32(_fee);
-        publicInputs[6] = bytes32(nonce[_from]);
+        // this nonce should be unique because it uses the randomness calculated in the encrypted balance
+        publicInputs[6] = bytes32(keccak256(_senderNewBalance));
         publicInputs[7] = bytes32(oldBalance.C1x);
         publicInputs[8] = bytes32(oldBalance.C1y);
         publicInputs[9] = bytes32(oldBalance.C2x);
@@ -236,14 +232,12 @@ contract PrivateToken {
         address _to,
         uint40 _amount,
         bytes memory _withdraw_proof,
-        PublicKey memory _pub_key,
         EncryptedAmount memory _newEncryptedAmount
     ) public {
-        // TODO: add nonce
         EncryptedAmount memory oldEncryptedAmount = balances[_from];
-        bytes32[] memory publicInputs = new bytes32[](7);
-        publicInputs[0] = bytes32(_pub_key.X);
-        publicInputs[1] = bytes32(_pub_key.Y);
+        bytes32[] memory publicInputs = new bytes32[]();
+        // this nonce should be unique because it uses the randomness calculated in the encrypted balance
+        publicInputs[1] = bytes32(keccak256(_newEncryptedAmount));
         publicInputs[2] = bytes32(uint256(_amount));
         publicInputs[3] = bytes32(oldEncryptedAmount.C1x);
         publicInputs[4] = bytes32(oldEncryptedAmount.C1y);
@@ -270,7 +264,7 @@ contract PrivateToken {
      * @param _proof - proof to verify with the ProcessPendingTransfers circuit
      * @param _txsToProcess - an array indexes of PendingDeposits to process; max length 4
      * @param _feeRecipient - the recipient of the fees (typically the processor of these txs)
-     * @param _recipient - the recipient of the pending transfers within the system
+     * @param _recipient - the packed public key of the recipient in the system
      * @param _publicKey - the public key of the recipient in the system
      * @param _newBalance - the new balance of the recipient after processing the pending transfers
      */
@@ -280,7 +274,6 @@ contract PrivateToken {
         uint8[] memory _txsToProcess,
         address _feeRecipient,
         bytes32 _recipient,
-        PublicKey memory _publicKey,
         EncryptedAmount calldata _newBalance
     ) public {
         uint8 numTxsToProcess = uint8(_txsToProcess.length);
