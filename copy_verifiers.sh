@@ -1,6 +1,7 @@
 #!/bin/bash
 
 LOCATIONS=(
+    "lock"
     "process_pending_deposits"
     "process_pending_transfers"
     "transfer"

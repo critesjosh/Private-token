@@ -33,8 +33,9 @@ fn main(private_key: Field,
 
         sender_pub_key: pub Gaffine, 
         recipient_pub_key: pub Gaffine, 
-        account_address: pub Field,
-        fee: pub u40,
+        // account_address: pub Field, // can be removed with packed public keys
+        process_fee: pub u40,
+        relay_fee: pub u40,
         nonce: pub Field,
         balance_old_me_encrypted_1: pub Gaffine, 
         balance_old_me_encrypted_2: pub Gaffine,
@@ -60,8 +61,8 @@ fn main(private_key: Field,
     */
     assert(value>=1); 
 
-    // TODO: check that the hash of public_key_to is equal to account_address
-    assert(std::hash::poseidon::bn254::hash_2([recipient_pub_key.x, recipient_pub_key.y]) == account_address);
+    // can be removed with packed public keys
+    // assert(std::hash::poseidon::bn254::hash_2([recipient_pub_key.x, recipient_pub_key.y]) == account_address);
 
     let bjj_affine: AffineCurve = AffineCurve::new(bjj_a, bjj_d, Gaffine::new(bjj_generator_x, bjj_generator_y));
     let base_pt: Gaffine = Gaffine::new(bjj_basept_x, bjj_basept_y);
@@ -70,7 +71,7 @@ fn main(private_key: Field,
     // check that unencrypted balance of sender really corresponds to his encrypted balance
     assert((decoded_value.x == embedded_balance_old_me_clear.x) & (decoded_value.y == embedded_balance_old_me_clear.y)); 
 
-    let balance_new_me_encrypted_computed = bjj_exp_elgamal_encrypt(sender_pub_key, balance_old_me_clear - value - fee, randomness);
+    let balance_new_me_encrypted_computed = bjj_exp_elgamal_encrypt(sender_pub_key, balance_old_me_clear - value - process_fee - relay_fee, randomness);
     // checks that the new encrypted balance of sender is correct
     assert((balance_new_me_encrypted_computed.0.x==balance_new_me_encrypted_1.x) & 
             (balance_new_me_encrypted_computed.0.y==balance_new_me_encrypted_1.y) & 
@@ -131,4 +132,53 @@ fn bjj_exp_elgamal_decrypt(private_key : Field, ciphertext: (Gaffine,Gaffine)) -
  let shared_secret = bjj_affine.mul(private_key,ciphertext.0);
  let plain_embedded = bjj_affine.subtract(ciphertext.1,shared_secret);
  plain_embedded
+}
+
+
+// translated from here: https://github.com/iden3/circomlibjs/blob/4f094c5be05c1f0210924a3ab204d8fd8da69f49/src/babyjub.js#L108
+fn unpack_point(public_key: Field) {
+  let mut public_key_buffer = public_key.to_le_bytes(32);
+  std::println(public_key_buffer[0]);
+    std::println(public_key_buffer[1]);
+  std::println(public_key_buffer[31]);
+
+//   let mut sign = false;
+//   if((public_key_buffer[31] & 0x80) != 0) {
+//         sign = true;
+//         public_key_buffer[31] &= 0x7f;
+//   }
+
+  let y = from_rpr_le(public_key, 0);
+  let bjj_affine: AffineCurve = AffineCurve::new(bjj_a, bjj_d, Gaffine::new(bjj_generator_x, bjj_generator_y));
+  // let base_pt: Gaffine = Gaffine::new(bjj_basept_x, bjj_basept_y);
+//   let y2 = bjj_affine.mul(y, y);
+  
+//   let y2 = y*y;
+
+  
+}
+
+
+// translated from here: https://github.com/iden3/ffjavascript/blob/d1cd4ae32170aedd000865f0828b78a15df6f06f/src/scalar.js#L215
+fn from_rpr_le(public_key: Field, o: Field) {
+  let mut array: [u8] = public_key.to_le_radix(16, 8);
+  std::println(array[0]);
+  std::println(array[1]);
+  std::println(array[31]);
+
+//   for i in 0..8 {
+//     v.push(buff[i] as Field);
+//   }
+}
+
+#[test]
+fn test_unpack_point() {
+  let private_key: Field = 2291123624948246627368989940774052753470489062495018070576418670157516550852; // see debug notebook for an example on how to compute those
+  let public_key: Gaffine = bjj_priv_to_pub_key(private_key);
+  std::println(0xdc9f9fdb746d0f07b004cc4316e3495a58570b90661499f8a6a6696ff4156baa as Field);
+
+  //let public_key_array = public_key.to_le_bytes(16);
+  unpack_point(0xdc9f9fdb746d0f07b004cc4316e3495a58570b90661499f8a6a6696ff4156baa);
+  
+  //std::println(public_key_array);
 }

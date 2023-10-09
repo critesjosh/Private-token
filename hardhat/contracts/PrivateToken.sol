@@ -5,6 +5,7 @@ import {UltraVerifier as ProcessDepositVerifier} from "./process_pending_deposit
 import {UltraVerifier as ProcessTransferVerifier} from "./process_pending_transfers/plonk_vk.sol";
 import {UltraVerifier as TransferVerifier} from "./transfer/plonk_vk.sol";
 import {UltraVerifier as WithdrawVerifier} from "./withdraw/plonk_vk.sol";
+import {UltraVerifier as LockVerifier} from "./lock/plonk_vk.sol";
 
 import {IERC20} from "./IERC20.sol";
 
@@ -33,7 +34,8 @@ contract PrivateToken {
         EncryptedAmount amount;
         // add a fee to incentivize someone to process the pending tx
         // otherwise leave as 0 and the recipient can process the tx themselves at cost
-        uint256 fee;
+        uint40 fee;
+        // the time the tx was created, processing must happen at least 1 block later
         uint256 time;
     }
 
@@ -41,7 +43,7 @@ contract PrivateToken {
         uint256 amount;
         // add a fee to incentivize someone to process the pending tx
         // otherwise leave as 0 and the recipient can process the tx themselves at cost
-        uint256 fee;
+        uint40 fee;
     }
 
     //
@@ -56,10 +58,12 @@ contract PrivateToken {
     ProcessTransferVerifier public immutable PROCESS_TRANSFER_VERIFIER;
     TransferVerifier public immutable TRANSFER_VERIFIER;
     WithdrawVerifier public immutable WITHDRAW_VERIFIER;
+    LockVerifier public immutable LOCK_VERIFIER;
+
     uint40 public totalSupply;
 
     IERC20 token;
-    uint256 public immutable SOURCE_TOKEN_DECIMALS;
+    uint256 public SOURCE_TOKEN_DECIMALS;
     uint8 public immutable decimals = 2;
 
     // packed public key => encrypted balance
@@ -74,11 +78,11 @@ contract PrivateToken {
     mapping(bytes32 => mapping(uint256 => PendingDeposit)) public allPendingDepositsMapping;
 
     // This prevents replay attacks in the transfer fn
-    // TODO: update how nonces are calculated, use a hash or something
+    // packed public key => keccak(new encrypted balance), this should be random enough bc it leverages randomness for encryption
     mapping(bytes32 => bytes32) public nonce;
 
     // account can be locked and controlled by a contract
-    mapping(bytes32 => address) public lockedBy;
+    mapping(bytes32 => address) public lockedTo;
 
     /*
         A PendingTransaction is added to this array when transfer is called.
@@ -91,11 +95,13 @@ contract PrivateToken {
 
     */
 
-    event Transfer(bytes32 indexed to, address indexed from);
-    event TransferProcessed(bytes32 to, uint256 fee, address feeRecipient);
-    event Deposit(address from, bytes32 to, uint256 amount, uint256 fee);
-    event DepositProcessed(bytes32 to, uint256 amount, uint256 fee, address feeRecipient);
+    event Transfer(bytes32 indexed to, bytes32 indexed from);
+    event TransferProcessed(bytes32 to, uint256 processFee, address processFeeRecipient);
+    event Deposit(address from, bytes32 to, uint256 amount, uint256 processFee);
+    event DepositProcessed(bytes32 to, uint256 amount, uint256 processFee, address feeRecipient);
     event Withdraw(bytes32 from, address to, uint256 amount);
+    event Lock(bytes32 publicKey, address lockedTo, uint256 relayerFee, address relayerFeeRecipient);
+    event Unlock(bytes32 publicKey, address unlockedFrom);
 
     /**
      * @notice Constructor - setup up verifiers and link to token
@@ -106,11 +112,13 @@ contract PrivateToken {
      * @param _withdrawVerifier address of the withdrawVerifier contract
      * @param _token - ERC20 token address
      */
+
     constructor(
         address _processDepositVerifier,
         address _processTransferVerifier,
         address _transferVerifier,
         address _withdrawVerifier,
+        address _lockVerifier,
         address _token,
         uint256 _decimals
     ) {
@@ -118,12 +126,15 @@ contract PrivateToken {
         PROCESS_TRANSFER_VERIFIER = ProcessTransferVerifier(_processTransferVerifier);
         TRANSFER_VERIFIER = TransferVerifier(_transferVerifier);
         WITHDRAW_VERIFIER = WithdrawVerifier(_withdrawVerifier);
+        LOCK_VERIFIER = LockVerifier(_lockVerifier);
         token = IERC20(_token);
+        uint256 sourceDecimals = _decimals;
         try token.decimals() returns (uint256 returnedDecimals) {
-            SOURCE_TOKEN_DECIMALS = returnedDecimals;
+            sourceDecimals = returnedDecimals;
         } catch {
-            SOURCE_TOKEN_DECIMALS = _decimals;
+            // do nothing
         }
+        SOURCE_TOKEN_DECIMALS = sourceDecimals;
     }
 
     // TODO: add transferWithRelay and withdrawWithRelay functions and write circuits
@@ -138,15 +149,15 @@ contract PrivateToken {
      *  The deposited amount is pushed to the recepients PendingDeposits queue. The fee
      *  is the amount that will be paid to the processor of the tx (when processPendingDeposits
      *  is called)
-     *  This function converts the token to 2 decimal places, the remainder is lost
+     *  This function converts the token to 2 decimal places, the remainder is lost.
      * @dev
      * @param _from - sender of the tokens, an ETH address
      * @param _amount - amount to deposit
      * @param _to - the packed public key of the recipient in the system
-     * @param _fee - (optional, can be 0) amount to pay the processor of the tx (when processPendingDeposits is called)
+     * @param _processFee - (optional, can be 0) amount to pay the processor of the tx (when processPendingDeposits is called)
      */
 
-    function deposit(address _from, uint256 _amount, bytes32 _to, uint40 _fee) public {
+    function deposit(address _from, uint256 _amount, bytes32 _to, uint40 _processFee) public {
         // convert to decimals places. any decimals following 2 are lost
         // max value is u40 - 1, so 1099511627775. with 2 decimals
         // that gives us a max supply of ~11 billion erc20 tokens
@@ -154,9 +165,10 @@ contract PrivateToken {
         require(totalSupply + amount < type(uint40).max, "Amount is too big");
         token.transferFrom(_from, address(this), uint256(_amount));
         // keep the fee - users can add a fee to incentivize processPendingDeposits
-        amount = amount - _fee;
-        // TODO: updpate this to handle the mapping
-        allPendingDepositsMapping[_to].push(PendingDeposit(amount, _fee));
+        amount = amount - _processFee;
+        uint256 depositNonce = pendingDepositNonces[_to];
+        allPendingDepositsMapping[_to][depositNonce] = PendingDeposit(amount, _processFee);
+        pendingDepositNonces[_to] += 1;
         totalSupply += amount;
     }
 
@@ -168,11 +180,16 @@ contract PrivateToken {
      *  two account cannot simultaneously update the encrypted balance of the recipient. Having a pending
      *  transfer queue allows the sender to always succeed in debiting their account, and the recipient
      *  receiving the funds.
+     *  The account must not be locked to a contract to call this function.
      * @dev
      * @param _to - the packed public key of the recipient in the system
      * @param _from - the packed public key of the sender in the system
-     * @param _fee - (optional, can be 0) amount to pay the processor of the tx (when processPendingTransfers is called)
-     *  if there is no fee supplied, the recipient can process it themselves
+     * @param _processFee - (optional, can be 0) amount to pay the processor of the tx (when processPendingTransfers is called)
+     *   if there is no fee supplied, the recipient can process it themselves
+     * @param _relayFee - (optional, can be 0) amount to pay the relayer of the tx, if the sender of
+     *   the ETH tx is not the creator of the proof. sharing of the proof can happen in off-chain channels
+     *   the relayer can check that they will get the fee by verifing the proof off-chain before submitting the tx
+     * @param _relayFeeRecipient - the recipient of the relay fee
      * @param _amountToSend - amount to send, encrypted with the recipients public key
      * @param _senderNewBalance - sender's new balance, minus the amount sent and the fee
      * @param _proof_transfer - proof
@@ -181,12 +198,14 @@ contract PrivateToken {
     function transfer(
         bytes32 _to,
         bytes32 _from,
-        uint256 _fee,
+        uint40 _processFee,
+        uint40 _relayFee,
+        address _relayFeeRecipient,
         EncryptedAmount calldata _amountToSend,
         EncryptedAmount calldata _senderNewBalance,
         bytes memory _proof_transfer
     ) public {
-        address lockedByAddress = lockedBy[_sender_pub_key];
+        address lockedByAddress = lockedTo[_from];
         require(lockedByAddress == address(0) || lockedByAddress == msg.sender, "account is locked to another account");
         EncryptedAmount memory oldBalance = balances[_from];
         EncryptedAmount memory receiverBalance = balances[_to];
@@ -196,17 +215,20 @@ contract PrivateToken {
         );
         if (zeroBalance) {
             // no fee required if a new account
-            _fee = 0;
+            _processFee = 0;
             balances[_to] = _amountToSend;
         } else {
-            allPendingTransfersMapping[_to].push(PendingTransfer(_amountToSend, _fee, block.timestamp));
+            uint256 transferNonce = pendingTransferNonces[_to];
+            allPendingTransfersMapping[_to][transferNonce] =
+                PendingTransfer(_amountToSend, _processFee, block.timestamp);
         }
 
-        bytes32[] memory publicInputs = new bytes32[]();
-        publicInputs[4] = bytes32(_to);
-        publicInputs[5] = bytes32(_fee);
+        bytes32[] memory publicInputs = new bytes32[](19);
+        publicInputs[3] = bytes32(_to);
+        publicInputs[4] = bytes32(uint256(_processFee));
+        publicInputs[5] = bytes32(uint256(_relayFee));
         // this nonce should be unique because it uses the randomness calculated in the encrypted balance
-        publicInputs[6] = bytes32(keccak256(_senderNewBalance));
+        publicInputs[6] = bytes32(keccak256(abi.encode(_senderNewBalance)));
         publicInputs[7] = bytes32(oldBalance.C1x);
         publicInputs[8] = bytes32(oldBalance.C1y);
         publicInputs[9] = bytes32(oldBalance.C2x);
@@ -223,30 +245,43 @@ contract PrivateToken {
 
         balances[_from] = _senderNewBalance;
         emit Transfer(_from, _to);
-        nonce[_from]++;
+        token.transfer(_relayFeeRecipient, _relayFee * 10 ** (SOURCE_TOKEN_DECIMALS - decimals));
     }
 
     /**
-     * @notice TODO
+     * @notice withdraws the amount of tokens from the contract to the recipient (_to). the account must
+     *  not be locked to a contract to call this function.
      * @dev
-     * @param
+     *  @param _from - the packed public key of the sender in the system
+     *  @param _to - the ETH address of the recipient
+     *  @param _amount - amount to withdraw
+     *  @param _relayFee - (optional, can be 0) amount to pay the relayer of the tx, if the sender of
+     *   the ETH tx is not the creator of the proof. sharing of the proof can happen in off-chain channels
+     *   the relayer can check that they will get the fee by verifing the proof off-chain before submitting the tx
+     * @param _relayFeeRecipient - the recipient of the relay fee
+     *  @param _withdraw_proof - proof
+     *  @param _newEncryptedAmount - the new encrypted balance of the sender after the withdraw and fee
      */
 
     function withdraw(
         bytes32 _from,
         address _to,
         uint40 _amount,
+        uint40 _relayFee,
+        address _relayFeeRecipient,
         bytes memory _withdraw_proof,
         EncryptedAmount memory _newEncryptedAmount
     ) public {
-        address lockedByAddress = lockedBy[_from];
-        require(lockedByAddress == address(0) || lockedByAddress == msg.sender, "account is locked to another account");
-        // TODO: add nonce
+        address lockedToAddress = lockedTo[_from];
+        require(lockedToAddress == address(0) || lockedToAddress == msg.sender, "account is locked to another account");
+        // TODO: fee
         EncryptedAmount memory oldEncryptedAmount = balances[_from];
-        bytes32[] memory publicInputs = new bytes32[]();
+        bytes32[] memory publicInputs = new bytes32[](11);
         // this nonce should be unique because it uses the randomness calculated in the encrypted balance
-        publicInputs[1] = bytes32(keccak256(_newEncryptedAmount));
+        publicInputs[0] = bytes32(keccak256(abi.encode(_newEncryptedAmount)));
+        publicInputs[1] = bytes32(_from);
         publicInputs[2] = bytes32(uint256(_amount));
+        publicInputs[3] = bytes32(uint256(_relayFee));
         publicInputs[3] = bytes32(oldEncryptedAmount.C1x);
         publicInputs[4] = bytes32(oldEncryptedAmount.C1y);
         publicInputs[5] = bytes32(oldEncryptedAmount.C2x);
@@ -259,7 +294,8 @@ contract PrivateToken {
         // calculate the new total encrypted supply offchain, replace existing value (not an increment)
         balances[_from] = _newEncryptedAmount;
         totalSupply -= _amount;
-        token.transferFrom(address(this), _to, uint256(_amount * 10 ** (token.decimals() - decimals)));
+        token.transfer(_relayFeeRecipient, uint256(_relayFee * 10 ** (SOURCE_TOKEN_DECIMALS - decimals)));
+        token.transfer(_to, uint256(_amount * 10 ** (SOURCE_TOKEN_DECIMALS - decimals)));
     }
 
     /**
@@ -270,10 +306,10 @@ contract PrivateToken {
      *  balance and the calculated encrypted balances match.
      * @dev
      * @param _proof - proof to verify with the ProcessPendingTransfers circuit
-     * @param _txsToProcess - an array indexes of PendingDeposits to process; max length 4
+     * @param _txsToProcess - an array of keys of PendingDeposits to process from allPendingDepositsMapping
+     *      max length 4
      * @param _feeRecipient - the recipient of the fees (typically the processor of these txs)
      * @param _recipient - the packed public key of the recipient in the system
-     * @param _publicKey - the public key of the recipient in the system
      * @param _newBalance - the new balance of the recipient after processing the pending transfers
      */
 
@@ -286,20 +322,19 @@ contract PrivateToken {
     ) public {
         uint8 numTxsToProcess = uint8(_txsToProcess.length);
         require(numTxsToProcess <= 4, "Too many txs to process");
-        uint256 totalFees;
+        uint40 totalFees;
         uint256 totalAmount;
         EncryptedAmount memory oldBalance = balances[_recipient];
-        PendingDeposit[] storage userPendingDepositsArray = allPendingDepositsMapping[_recipient];
-        // TODO: updpate this to handle the mapping
-        for (uint8 i = 0; i++; numTxsToProcess) {
-            PendingDeposit memory deposit = sPopCheap(userPendingDepositsArray, _txsToProcess[i]);
-            totalAmount += deposit.amount;
-            totalFees += deposit.fee;
+        PendingDeposit[] memory userPendingDepositsArray = new PendingDeposit[](4);
+
+        for (uint8 i = 0; i < 4; i++) {
+            userPendingDepositsArray[i] = allPendingDepositsMapping[_recipient][_txsToProcess[i]];
+            delete allPendingDepositsMapping[_recipient][_txsToProcess[i]];
+            totalAmount += userPendingDepositsArray[i].amount;
+            totalFees += userPendingDepositsArray[i].fee;
         }
 
         bytes32[] memory publicInputs = new bytes32[](12);
-        publicInputs[0] = bytes32(_publicKey.X);
-        publicInputs[1] = bytes32(_publicKey.Y);
         publicInputs[2] = bytes32(_recipient);
         publicInputs[3] = bytes32(totalAmount);
         publicInputs[4] = bytes32(oldBalance.C1x);
@@ -313,7 +348,7 @@ contract PrivateToken {
 
         require(PROCESS_DEPOSIT_VERIFIER.verify(_proof, publicInputs), "Process pending proof is invalid");
         balances[_recipient] = _newBalance;
-        token.transfer(_feeRecipient, totalFees);
+        token.transfer(_feeRecipient, uint256(totalFees * 10 ** (SOURCE_TOKEN_DECIMALS - decimals)));
     }
 
     /**
@@ -334,90 +369,96 @@ contract PrivateToken {
         uint8[] memory _txsToProcess,
         address _feeRecipient,
         bytes32 _recipient,
-        // PublicKey memory _publicKey,
         EncryptedAmount calldata _newBalance
     ) public {
-        uint8 numTxsToProcess = uint8(_txsToProcess.length);
-        require(_txsToProcess.length <= 4, "Too many txs to process");
+        //uint8 numTxsToProcess = uint8(_txsToProcess.length);
+        // require(_txsToProcess.length <= 4, "Too many txs to process");
         uint256 totalFees;
         EncryptedAmount memory oldBalance = balances[_recipient];
-        EncryptedAmount[] memory encryptedAmounts = new EncryptedAmount[](numTxsToProcess);
+        // EncryptedAmount[] memory encryptedAmounts = new EncryptedAmount[](numTxsToProcess);
 
         bytes32[] memory publicInputs = new bytes32[](35);
-        // publicInputs[0] = bytes32(_publicKey.X);
-        // publicInputs[1] = bytes32(_publicKey.Y);
-        // publicInputs[2] = bytes32(_recipient);
-        // publicInputs[3] = bytes32(encryptedAmounts.amount.C1x);
-        publicInputs[4] = bytes32(oldBalance.C1x);
-        publicInputs[5] = bytes32(oldBalance.C1y);
-        publicInputs[6] = bytes32(oldBalance.C2x);
-        publicInputs[7] = bytes32(oldBalance.C2y);
-        publicInputs[8] = bytes32(_newBalance.C1x);
-        publicInputs[9] = bytes32(_newBalance.C1y);
-        publicInputs[10] = bytes32(_newBalance.C2x);
-        publicInputs[11] = bytes32(_newBalance.C2y);
+        publicInputs[0] = bytes32(oldBalance.C1x);
+        publicInputs[1] = bytes32(oldBalance.C1y);
+        publicInputs[2] = bytes32(oldBalance.C2x);
+        publicInputs[3] = bytes32(oldBalance.C2y);
+        publicInputs[4] = bytes32(_newBalance.C1x);
+        publicInputs[5] = bytes32(_newBalance.C1y);
+        publicInputs[6] = bytes32(_newBalance.C2x);
+        publicInputs[7] = bytes32(_newBalance.C2y);
 
-        PendingTransfer[] storage pendingTransfers = allPendingTransfersMapping[_recipient];
+        PendingTransfer[] memory pendingTransfers = new PendingTransfer[](4);
 
-        // TODO: updpate this to handle the mapping
-        for (uint8 i = 0; i++; numTxsToProcess) {
-            // note that the sPopCheap changes the order of the array,
-            // so _txsToProcess[i] should take that into account when choosing indexes
-            PendingTransfer memory pendingTransfer = sPopCheap(pendingTransfers, _txsToProcess[i]);
-            require(block.timestamp > pendingTransfer.time);
-            publicInputs.push(pendingTransfer.amount.C1x);
-            publicInputs.push(pendingTransfer.amount.C1y);
-            publicInputs.push(pendingTransfer.amount.C2x);
-            publicInputs.push(pendingTransfer.amount.C2x);
-            totalFees += pendingTransfer.fee;
+        for (uint8 i = 0; i < 4; i++) {
+            pendingTransfers[i] = allPendingTransfersMapping[_recipient][_txsToProcess[i]];
+            delete allPendingTransfersMapping[_recipient][_txsToProcess[i]];
+            require(block.timestamp > pendingTransfers[i].time);
+            publicInputs[8 + 4 * i] = bytes32(pendingTransfers[i].amount.C1x);
+            publicInputs[9 + 4 * i] = bytes32(pendingTransfers[i].amount.C1y);
+            publicInputs[10 + 4 * i] = bytes32(pendingTransfers[i].amount.C2x);
+            publicInputs[11 + 4 * i] = bytes32(pendingTransfers[i].amount.C2y);
+            totalFees += pendingTransfers[i].fee;
         }
 
         require(PROCESS_TRANSFER_VERIFIER.verify(_proof, publicInputs), "Process pending proof is invalid");
         balances[_recipient] = _newBalance;
-        token.transfer(_feeRecipient, totalFees);
-    }
-
-    // from here: https://github.com/cryptofinlabs/cryptofin-solidity/blob/master/contracts/array-utils/AddressArrayUtils.sol
-
-    function sPopCheap(PendingTransfer[] storage transfers, uint256 index) internal returns (PendingTransfer memory) {
-        uint256 length = transfers.length;
-        if (index >= length) {
-            revert("Error: index out of bounds");
-        }
-        PendingTransfer memory entry = transfers[index];
-        if (index != length - 1) {
-            transfers[index] = transfers[length - 1];
-            delete transfers[length - 1];
-        }
-        transfers.length--;
-        return entry;
-    }
-
-    function sPopCheap(PendingDeposit[] storage deposits, uint256 index) internal returns (PendingDeposit memory) {
-        uint256 length = deposits.length;
-        if (index >= length) {
-            revert("Error: index out of bounds");
-        }
-        PendingDeposit memory entry = deposits[index];
-        if (index != length - 1) {
-            deposits[index] = deposits[length - 1];
-            delete deposits[length - 1];
-        }
-        deposits.length--;
-        return entry;
+        token.transfer(_feeRecipient, uint256(totalFees * 10 ** (SOURCE_TOKEN_DECIMALS - decimals)));
     }
 
     // the contract this is locked to must call unlock to give control back to this contract
     // locked contracts cannot transfer or withdraw funds
+    /**
+     * @notice the contract this is locked to must call unlock to give control back to this contract
+     *  locked contracts cannot transfer or withdraw funds
+     *  @param _publicKey - the public key of the account to lock
+     * @param _lockToContract - the contract to lock the account to
+     * @param _relayFee - (optional, can be 0) amount to pay the relayer of the tx, if the sender of
+     *   the ETH tx is not the creator of the proof. sharing of the proof can happen in off-chain channels
+     *   the relayer can check that they will get the fee by verifing the proof off-chain before submitting the tx
+     * @param _relayFeeRecipient - the recipient of the relay fee
+     * @param _proof - proof to verify with the ProcessPendingTransfers circuit
+     * @param _newEncryptedAmount - the new encrypted balance of the sender after the fee
+     */
+    function lock(
+        bytes32 _publicKey,
+        address _lockToContract,
+        uint40 _relayFee,
+        address _relayFeeRecipient,
+        bytes memory _proof,
+        EncryptedAmount memory _newEncryptedAmount
+    ) public {
+        require(lockedTo[_publicKey] == address(0), "account is already locked");
+        lockedTo[_publicKey] = _lockToContract;
+        EncryptedAmount memory oldEncryptedAmount = balances[_publicKey];
 
-    // TODO: add relayer fee
-    function lock(bytes32 publicKey, address lockTo) public {
-        lockedBy[publicKey] = lockTo;
-        verifier.verify(proof, publicInputs);
+        bytes32[] memory publicInputs = new bytes32[](11);
+        // this nonce should be unique because it uses the randomness calculated in the encrypted balance
+        publicInputs[0] = bytes32(keccak256(abi.encode(_newEncryptedAmount)));
+        publicInputs[1] = bytes32(_publicKey);
+        publicInputs[2] = bytes32(uint256(_relayFee));
+        publicInputs[3] = bytes32(oldEncryptedAmount.C1x);
+        publicInputs[4] = bytes32(oldEncryptedAmount.C1y);
+        publicInputs[5] = bytes32(oldEncryptedAmount.C2x);
+        publicInputs[6] = bytes32(oldEncryptedAmount.C2y);
+        publicInputs[7] = bytes32(_newEncryptedAmount.C1x);
+        publicInputs[8] = bytes32(_newEncryptedAmount.C1y);
+        publicInputs[9] = bytes32(_newEncryptedAmount.C2x);
+        publicInputs[10] = bytes32(_newEncryptedAmount.C2y);
+        LOCK_VERIFIER.verify(_proof, publicInputs);
+        token.transfer(_relayFeeRecipient, uint256(_relayFee * 10 ** (SOURCE_TOKEN_DECIMALS - decimals)));
+        emit Lock(_publicKey, _lockToContract, _relayFee, _relayFeeRecipient);
     }
 
+    /**
+     * @notice
+     * @dev
+     * @param
+     */
+
     function unlock(bytes32 publicKey) public {
-        require(msg.sender == lockedBy[publicKey], "wrong sender");
-        lockedBy[publicKey] = address(0);
+        address unlockedFrom = lockedTo[publicKey];
+        require(msg.sender == unlockedFrom, "wrong sender");
+        emit Unlock(publicKey, unlockedFrom);
+        lockedTo[publicKey] = address(0);
     }
 }

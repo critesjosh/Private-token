@@ -26,9 +26,10 @@ fn main(private_key: Field,
         balance_old_clear: Field,
 
         // Public Inputs
-
+        nonce: pub Field,
         public_key: pub Gaffine, 
         value: pub Field, 
+        relay_fee: pub Field,
         balance_old_encrypted_1: pub Gaffine, 
         balance_old_encrypted_2: pub Gaffine,
         balance_new_encrypted_1: pub Gaffine, 
@@ -41,7 +42,7 @@ fn main(private_key: Field,
     // check that unencrypted balance of withdrawer really corresponds to his encrypted balance
     assert((decoded_value.x == embedded_balance_old_me_clear.x) & (decoded_value.y == embedded_balance_old_me_clear.y)); 
     // we encrypt the minted value with the minter's public key
-    let new_balance_encrypted_computed = bjj_exp_elgamal_encrypt(public_key, balance_old_clear - value, randomness);
+    let new_balance_encrypted_computed = bjj_exp_elgamal_encrypt(public_key, balance_old_clear - value - relay_fee, randomness);
     assert((new_balance_encrypted_computed.0.x == balance_new_encrypted_1.x) & 
             (new_balance_encrypted_computed.0.y == balance_new_encrypted_1.y) & 
             (new_balance_encrypted_computed.1.x == balance_new_encrypted_2.x) & 
