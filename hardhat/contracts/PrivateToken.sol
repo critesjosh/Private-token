@@ -8,6 +8,8 @@ import {UltraVerifier as WithdrawVerifier} from "./withdraw/plonk_vk.sol";
 import {UltraVerifier as LockVerifier} from "./lock/plonk_vk.sol";
 
 import {IERC20} from "./IERC20.sol";
+import {IERC165} from "./IERC165.sol";
+import {ERC165Checker} from "./ERC165Checker.sol";
 
 /**
  * @dev Implementation of PrivateToken.
@@ -16,6 +18,8 @@ import {IERC20} from "./IERC20.sol";
  * Because we use Exponential ElGamal encryption, each EncryptedAmount is a pair of points on Baby Jubjub (C1,C2) = ((C1x,C1y),(C2x,C2y)).
  */
 contract PrivateToken {
+    using ERC165Checker for address;
+
     struct EncryptedAmount {
         // #TODO : We could pack those in 2 uints instead of 4 to save storage costs (for e.g using circomlibjs library to pack points on BabyJubjub)
         uint256 C1x;
@@ -53,7 +57,7 @@ contract PrivateToken {
     //     uint256 Y;
     // } // The Public Key should be a point on Baby JubJub elliptic curve : checks must be done offchain before registering to ensure that X<p and Y<p and (X,Y) is on the curve
     // p = 21888242871839275222246405745257275088548364400416034343698204186575808495617 < 2**254
-
+    ERC165 public immutable ERC165;
     ProcessDepositVerifier public immutable PROCESS_DEPOSIT_VERIFIER;
     ProcessTransferVerifier public immutable PROCESS_TRANSFER_VERIFIER;
     TransferVerifier public immutable TRANSFER_VERIFIER;
@@ -95,11 +99,11 @@ contract PrivateToken {
 
     */
 
-    event Transfer(bytes32 indexed to, bytes32 indexed from);
-    event TransferProcessed(bytes32 to, uint256 processFee, address processFeeRecipient);
+    event Transfer(bytes32 indexed to, bytes32 indexed from, EncryptedAmount amount);
+    event TransferProcessed(bytes32 to, EncryptedAmount newBalance, uint256 processFee, address processFeeRecipient);
     event Deposit(address from, bytes32 to, uint256 amount, uint256 processFee);
     event DepositProcessed(bytes32 to, uint256 amount, uint256 processFee, address feeRecipient);
-    event Withdraw(bytes32 from, address to, uint256 amount);
+    event Withdraw(bytes32 from, address to, uint256 amount, address _relayFeeRecipient, uint256 relayFee);
     event Lock(bytes32 publicKey, address lockedTo, uint256 relayerFee, address relayerFeeRecipient);
     event Unlock(bytes32 publicKey, address unlockedFrom);
 
@@ -119,6 +123,7 @@ contract PrivateToken {
         address _transferVerifier,
         address _withdrawVerifier,
         address _lockVerifier,
+        address _erc165,
         address _token,
         uint256 _decimals
     ) {
@@ -127,6 +132,7 @@ contract PrivateToken {
         TRANSFER_VERIFIER = TransferVerifier(_transferVerifier);
         WITHDRAW_VERIFIER = WithdrawVerifier(_withdrawVerifier);
         LOCK_VERIFIER = LockVerifier(_lockVerifier);
+        ERC165 = IERC165(_erc165);
         token = IERC20(_token);
         uint256 sourceDecimals = _decimals;
         try token.decimals() returns (uint256 returnedDecimals) {
@@ -137,11 +143,6 @@ contract PrivateToken {
         SOURCE_TOKEN_DECIMALS = sourceDecimals;
     }
 
-    // TODO: add transferWithRelay and withdrawWithRelay functions and write circuits
-    // the idea is to be able to incentivize other people to submit txs for your from their
-    // ETH accounts, so you dont doxx yourself by sending txs from your ETH account
-    // relayFee can be public, recipient can be ETH address
-    // need to update circuits
     // potentially mitigate DDoS attacks against relayers with RLNs
 
     /**
@@ -170,6 +171,7 @@ contract PrivateToken {
         allPendingDepositsMapping[_to][depositNonce] = PendingDeposit(amount, _processFee);
         pendingDepositNonces[_to] += 1;
         totalSupply += amount;
+        emit Deposit(_from, _to, amount, _processFee);
     }
 
     /**
@@ -244,8 +246,10 @@ contract PrivateToken {
         require(TRANSFER_VERIFIER.verify(_proof_transfer, publicInputs), "Transfer proof is invalid");
 
         balances[_from] = _senderNewBalance;
-        emit Transfer(_from, _to);
-        token.transfer(_relayFeeRecipient, _relayFee * 10 ** (SOURCE_TOKEN_DECIMALS - decimals));
+        emit Transfer(_from, _to, _amountToSend);
+        if(_relayFee !=  0){
+            token.transfer(_relayFeeRecipient, _relayFee * 10 ** (SOURCE_TOKEN_DECIMALS - decimals));
+        }
     }
 
     /**
@@ -294,8 +298,12 @@ contract PrivateToken {
         // calculate the new total encrypted supply offchain, replace existing value (not an increment)
         balances[_from] = _newEncryptedAmount;
         totalSupply -= _amount;
-        token.transfer(_relayFeeRecipient, uint256(_relayFee * 10 ** (SOURCE_TOKEN_DECIMALS - decimals)));
-        token.transfer(_to, uint256(_amount * 10 ** (SOURCE_TOKEN_DECIMALS - decimals)));
+        if(_relayFee != 0){
+            token.transfer(_relayFeeRecipient, uint256(_relayFee * 10 ** (SOURCE_TOKEN_DECIMALS - decimals)));
+        }
+        uint256 convertedAmount = _amount * 10 ** (SOURCE_TOKEN_DECIMALS - decimals);
+        token.transfer(_to, convertedAmount);
+        emit Withdraw(_from, _to, convertedAmount, _relayFeeRecipient, _relayFee);
     }
 
     /**
@@ -327,7 +335,7 @@ contract PrivateToken {
         EncryptedAmount memory oldBalance = balances[_recipient];
         PendingDeposit[] memory userPendingDepositsArray = new PendingDeposit[](4);
 
-        for (uint8 i = 0; i < 4; i++) {
+        for (uint8 i = 0; i < numTxsToProcess; i++) {
             userPendingDepositsArray[i] = allPendingDepositsMapping[_recipient][_txsToProcess[i]];
             delete allPendingDepositsMapping[_recipient][_txsToProcess[i]];
             totalAmount += userPendingDepositsArray[i].amount;
@@ -348,7 +356,10 @@ contract PrivateToken {
 
         require(PROCESS_DEPOSIT_VERIFIER.verify(_proof, publicInputs), "Process pending proof is invalid");
         balances[_recipient] = _newBalance;
-        token.transfer(_feeRecipient, uint256(totalFees * 10 ** (SOURCE_TOKEN_DECIMALS - decimals)));
+        if(totalFees != 0){
+            token.transfer(_feeRecipient, uint256(totalFees * 10 ** (SOURCE_TOKEN_DECIMALS - decimals)));
+        }
+        emit DepositProcessed(_recipient, totalAmount, totalFees, _feeRecipient);
     }
 
     /**
@@ -371,11 +382,10 @@ contract PrivateToken {
         bytes32 _recipient,
         EncryptedAmount calldata _newBalance
     ) public {
-        //uint8 numTxsToProcess = uint8(_txsToProcess.length);
-        // require(_txsToProcess.length <= 4, "Too many txs to process");
+        uint8 numTxsToProcess = uint8(_txsToProcess.length);
+        require(_txsToProcess.length <= 4, "Too many txs to process");
         uint256 totalFees;
         EncryptedAmount memory oldBalance = balances[_recipient];
-        // EncryptedAmount[] memory encryptedAmounts = new EncryptedAmount[](numTxsToProcess);
 
         bytes32[] memory publicInputs = new bytes32[](35);
         publicInputs[0] = bytes32(oldBalance.C1x);
@@ -390,26 +400,38 @@ contract PrivateToken {
         PendingTransfer[] memory pendingTransfers = new PendingTransfer[](4);
 
         for (uint8 i = 0; i < 4; i++) {
-            pendingTransfers[i] = allPendingTransfersMapping[_recipient][_txsToProcess[i]];
-            delete allPendingTransfersMapping[_recipient][_txsToProcess[i]];
-            require(block.timestamp > pendingTransfers[i].time);
-            publicInputs[8 + 4 * i] = bytes32(pendingTransfers[i].amount.C1x);
-            publicInputs[9 + 4 * i] = bytes32(pendingTransfers[i].amount.C1y);
-            publicInputs[10 + 4 * i] = bytes32(pendingTransfers[i].amount.C2x);
-            publicInputs[11 + 4 * i] = bytes32(pendingTransfers[i].amount.C2y);
-            totalFees += pendingTransfers[i].fee;
+            if (i >= numTxsToProcess) {
+                // if there are less than 4 txs to process, pad the public inputs with 0s
+                publicInputs[8 + 4 * i] = bytes32(0);
+                publicInputs[9 + 4 * i] = bytes32(0);
+                publicInputs[10 + 4 * i] = bytes32(0);
+                publicInputs[11 + 4 * i] = bytes32(0);
+            } else {
+                pendingTransfers[i] = allPendingTransfersMapping[_recipient][_txsToProcess[i]];
+                delete allPendingTransfersMapping[_recipient][_txsToProcess[i]];
+                require(block.timestamp > pendingTransfers[i].time);
+                publicInputs[8 + 4 * i] = bytes32(pendingTransfers[i].amount.C1x);
+                publicInputs[9 + 4 * i] = bytes32(pendingTransfers[i].amount.C1y);
+                publicInputs[10 + 4 * i] = bytes32(pendingTransfers[i].amount.C2x);
+                publicInputs[11 + 4 * i] = bytes32(pendingTransfers[i].amount.C2y);
+                totalFees += pendingTransfers[i].fee;
+            }
         }
 
         require(PROCESS_TRANSFER_VERIFIER.verify(_proof, publicInputs), "Process pending proof is invalid");
         balances[_recipient] = _newBalance;
-        token.transfer(_feeRecipient, uint256(totalFees * 10 ** (SOURCE_TOKEN_DECIMALS - decimals)));
+        if(totalFees != 0){
+            token.transfer(_feeRecipient, uint256(totalFees * 10 ** (SOURCE_TOKEN_DECIMALS - decimals)));
+        }
+        emit TransferProcessed(_recipient, _newBalance, totalFees, _feeRecipient);
     }
 
     // the contract this is locked to must call unlock to give control back to this contract
     // locked contracts cannot transfer or withdraw funds
     /**
      * @notice the contract this is locked to must call unlock to give control back to this contract
-     *  locked contracts cannot transfer or withdraw funds
+     *  locked contracts cannot transfer or withdraw funds.
+     *  TODO: Use ERC165 to check if a contract implements this function to protect users funds.
      *  @param _publicKey - the public key of the account to lock
      * @param _lockToContract - the contract to lock the account to
      * @param _relayFee - (optional, can be 0) amount to pay the relayer of the tx, if the sender of
@@ -428,6 +450,8 @@ contract PrivateToken {
         EncryptedAmount memory _newEncryptedAmount
     ) public {
         require(lockedTo[_publicKey] == address(0), "account is already locked");
+        // figure out actual function signature, this is just a placeholder
+        require(_lockToContract.supportsInterface(0x80ac58cd, "contract does not implement unlock"));
         lockedTo[_publicKey] = _lockToContract;
         EncryptedAmount memory oldEncryptedAmount = balances[_publicKey];
 
@@ -450,9 +474,11 @@ contract PrivateToken {
     }
 
     /**
-     * @notice
+     * @notice unlocks an account locked by a contract. This function must be called by the
+     * contract that is locked to an account. Users must lock their account to a contract that
+     * has a function that calls this function, or their funds will be locked forever.
      * @dev
-     * @param
+     * @param publicKey - the packed public key of the account to unlock
      */
 
     function unlock(bytes32 publicKey) public {
