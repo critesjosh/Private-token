@@ -2,9 +2,15 @@
 pragma solidity ^0.8.13;
 
 import {Test, console2} from "forge-std/Test.sol";
-import {Counter} from "../src/Counter.sol";
+import {PrivateTokenFactory} from "../src/PrivateTokenFactory.sol";
+import {IERC20} from "../src/IERC20.sol";
+import {UltraVerifier as ProcessDepositVerifier} from "../src/process_pending_deposits/plonk_vk.sol";
+import {UltraVerifier as ProcessTransferVerifier} from "../src/process_pending_transfers/plonk_vk.sol";
+import {UltraVerifier as TransferVerifier} from "../src/transfer/plonk_vk.sol";
+import {UltraVerifier as WithdrawVerifier} from "../src/withdraw/plonk_vk.sol";
+import {UltraVerifier as LockVerifier} from "../src/lock/plonk_vk.sol";
 
-contract CounterTest is Test {
+contract PrivateTokenTest is Test {
     Counter public counter;
 
     function setUp() public {

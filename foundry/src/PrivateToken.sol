@@ -562,8 +562,10 @@ contract PrivateToken {
         );
         // figure out actual function signature, this is just a placeholder
         require(
-            _lockToContract.supportsInterface(0x80ac58cd),
-            "contract does not implement unlock"
+            _lockToContract.supportsInterface(
+                0x80ac58cd,
+                "contract does not implement unlock"
+            )
         );
         lockedTo[_publicKey] = _lockToContract;
         EncryptedAmount memory oldEncryptedAmount = balances[_publicKey];
