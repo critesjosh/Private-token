@@ -159,7 +159,7 @@ fn unpack_point(mut public_key: [u8; 32]) -> Gaffine
   // assert(y2 > point.y);
   assert(biguint::BigUint56::from_bytes(point.y.to_le_bytes(32))
           .gt(biguint::BigUint56::from_bytes(y2.to_le_bytes(32))));
-  let x2 = (y2 -1) / (bjj_a - (bjj_d * y2));
+  let x2 = (1-y2) / (bjj_a - (bjj_d * y2));
   let x2h = x2.pow_32(10944121435919637611123202872628637544274182200208017171849102093287904247808);
   assert(x2h == 1);
   point.x = sqrt(x2h);
