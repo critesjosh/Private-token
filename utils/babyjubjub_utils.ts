@@ -1,17 +1,36 @@
 // We cannot use typescript with circomlibjs, so we keep it as a js file (no types declaration file)
-import { buildBabyjub } from "circomlibjs";
-import { getCurveFromName, Scalar } from "ffjavascript";
+import { buildBabyjub, Point } from "circomlibjs";
+// import { getCurveFromName, Scalar } from "ffjavascript";
+export type BigNumberish = string | bigint | number | Uint8Array;
+
 import crypto from 'crypto';
 
 const babyJub = await buildBabyjub();
 
+export type PointObject = {
+    x: bigint,
+    y: bigint
+}
+
+export function getP() {
+    return babyJub.p;
+}
+
+export function getPm1d2() {
+    return babyJub.pm1d2;
+}
+
+export function getF() {
+    return babyJub.F;
+}
+
 // Internal functions
-function _uint8ArrayToBigInt(bytes) {
+function _uint8ArrayToBigInt(bytes: any) {
     let hex = [...bytes].map(b => b.toString(16).padStart(2, '0')).join('');
     return BigInt('0x' + hex);
 }
 
-function _getRandomBigInt(maxBigInt) {
+function _getRandomBigInt(maxBigInt: bigint) {
     // Calculate the byte length
     const byteLength = (maxBigInt.toString(16).length + 1) >> 1;
     while (true) {
@@ -24,7 +43,7 @@ function _getRandomBigInt(maxBigInt) {
     }
 }
 
-function _bigIntToUint8Array(bigInt) {
+function _bigIntToUint8Array(bigInt: bigint) {
     let hex = bigInt.toString(16);
 
     // Ensure even number of characters
@@ -45,7 +64,7 @@ function _bigIntToUint8Array(bigInt) {
 
 
 // Utils functions (should be called directly by the dapp)
-export function privateToPublicKey(privateKey) {
+export function privateToPublicKey(privateKey: BigNumberish) {
     const publicKeyPoint = babyJub.mulPointEscalar(babyJub.Base8, privateKey); // A point on Baby Jubjub : C = (CX, Cy)
     return {
         "x": _uint8ArrayToBigInt(babyJub.F.fromMontgomery(babyJub.F.e(publicKeyPoint[0])).reverse()), // fromMontgomery because circomlibjs uses the Montgomery form by default, but we need the Twisted Edwards form in Noir
@@ -60,7 +79,7 @@ export function generatePrivateAndPublicKey() {
     return { "privateKey": privateKey, "publicKey": publicKey };
 }
 
-export function exp_elgamal_encrypt(public_key, plaintext) {  // same notations as in https://en.wikipedia.org/wiki/ElGamal_encryption 
+export function exp_elgamal_encrypt(public_key: PointObject, plaintext: any) {  // same notations as in https://en.wikipedia.org/wiki/ElGamal_encryption 
     // Check if it's a number and an integer in uint40 range
     if (typeof plaintext === 'number' && Number.isInteger(plaintext) && plaintext >= 0 && plaintext <= 1099511627775) {
         const max_value = BigInt('2736030358979909402780800718157159386076813972158567259200215660948447373041'); // max value should be l (https://eips.ethereum.org/EIPS/eip-2494), the order of the big subgroup to avoid modulo bias
@@ -85,7 +104,7 @@ export function exp_elgamal_encrypt(public_key, plaintext) {  // same notations 
     }
 }
 
-export function exp_elgamal_decrypt_embedded(private_key, C1, C2) {
+export function exp_elgamal_decrypt_embedded(private_key: BigNumberish, C1: PointObject, C2: PointObject) {
     const shared_secret = babyJub.mulPointEscalar([babyJub.F.toMontgomery(_bigIntToUint8Array(C1.x).reverse()), babyJub.F.toMontgomery(_bigIntToUint8Array(C1.y).reverse())], private_key);
     const shared_secret_inverse = babyJub.mulPointEscalar(shared_secret, 2736030358979909402780800718157159386076813972158567259200215660948447373040n); // Note : this BigInt is equal to l-1, this equivalent here to -1, to take the inverse of shared_secret, because mulPointEscalar only supports positive values for the second argument
     const plain_embedded = babyJub.addPoint([babyJub.F.toMontgomery(_bigIntToUint8Array(C2.x).reverse()), babyJub.F.toMontgomery(_bigIntToUint8Array(C2.y).reverse())], shared_secret_inverse);
@@ -95,7 +114,7 @@ export function exp_elgamal_decrypt_embedded(private_key, C1, C2) {
     };
 }
 
-export function add_points(P1, P2) { // Used for (homomorphic) addition of baby jubjub (encrypted) points
+export function add_points(P1: PointObject, P2: PointObject) { // Used for (homomorphic) addition of baby jubjub (encrypted) points
     const Psum = babyJub.addPoint([babyJub.F.toMontgomery(_bigIntToUint8Array(P1.x).reverse()), babyJub.F.toMontgomery(_bigIntToUint8Array(P1.y).reverse())],
         [babyJub.F.toMontgomery(_bigIntToUint8Array(P2.x).reverse()), babyJub.F.toMontgomery(_bigIntToUint8Array(P2.y).reverse())]);
     return {
@@ -104,7 +123,7 @@ export function add_points(P1, P2) { // Used for (homomorphic) addition of baby 
     };
 }
 
-export function intToLittleEndianHex(n) { // should take a BigInt and returns a string in little endian hexadecimal, of size 64, to give as input as the Rust script computing the Discrete Log with baby-step giant-step algo
+export function intToLittleEndianHex(n: bigint) { // should take a BigInt and returns a string in little endian hexadecimal, of size 64, to give as input as the Rust script computing the Discrete Log with baby-step giant-step algo
     // Ensure input is a BigInt
     if (typeof n !== 'bigint') {
         throw new Error('Input must be a BigInt.');
@@ -125,13 +144,19 @@ export function intToLittleEndianHex(n) { // should take a BigInt and returns a 
     return littleEndian.padEnd(64, '0');
 }
 
+// have to convert to and from Montgomery form bc that is what circomlibjs expects
 
-export function packPublicKey(publicKey) {
-    return babyJub.packPoint(publicKey);
+export function packPublicKey(P1: Point) {
+    const montgomeryForm: [Uint8Array, Uint8Array] = [babyJub.F.toMontgomery(P1[0].reverse()), babyJub.F.toMontgomery(P1[1].reverse())];
+    return babyJub.packPoint(montgomeryForm);
 }
 
-export function unpackPoint(point) {
-    return babyJub.unpackPoint(point);
+export function unpackPoint(point: Uint8Array): Point {
+    let montgomeryForm = babyJub.unpackPoint(point);
+    return [
+        babyJub.F.fromMontgomery(babyJub.F.e(montgomeryForm[0])).reverse(),
+        babyJub.F.fromMontgomery(babyJub.F.e(montgomeryForm[1])).reverse()
+    ]
 }
 // Tests (Uncomment and then run `node babyjubjub_utils.js` to test)
 /*

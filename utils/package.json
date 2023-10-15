@@ -8,6 +8,7 @@
   },
   "type": "module",
   "devDependencies": {
+    "@types/circomlibjs": "^0.1.4",
     "@types/node": "^20.5.7",
     "ts-node": "^10.9.1"
   }
