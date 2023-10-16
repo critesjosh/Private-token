@@ -58,11 +58,11 @@ pub fn unpack_point(mut public_key: [u8; 32]) -> Gaffine
           .gt(BigUint56::from_bytes(p.to_le_bytes(32))));  
  
 
-  std::println(point.y);
+  // std::println(point.y);
 
   let mut y2 = point.y * point.y;
 
-  std::println(y2);
+  // std::println(y2);
 
   let x2 = (1-y2) / (bjj_a - (bjj_d * y2));
   let x2h = x2.pow_32(pm1d2);
@@ -122,11 +122,20 @@ fn test_pack_point(){
 fn test_unpack_point() {
   let private_key: Field = 0x0510bae26a9b59ebad67a4324c944b1910a778e8481d7f08ddba6bcd2b94b2c4; // see debug notebook for an example on how to compute those
   let public_key: Gaffine = priv_to_pub_key(private_key);
+  std::println(public_key);
+  let packed_pub_key = pack_point(public_key);
+  std::println(packed_pub_key);
 
   let packed_pub_key = [0xdc, 0x9f, 0x9f, 0xdb, 0x74, 0x6d, 0x0f, 0x07, 0xb0, 0x04, 0xcc, 0x43, 0x16, 0xe3, 0x49, 0x5a, 0x58, 0x57, 0x0b, 0x90, 0x66, 0x14, 0x99, 0xf8, 0xa6, 0xa6, 0x69, 0x6f, 0xf4, 0x15, 0x6b, 0xaa];
   let point = unpack_point(packed_pub_key);
-  
+  let repacked_point = pack_point(point);
+  let reunpacked_point = unpack_point(repacked_point);
   std::println(point);
+  std::println(repacked_point);
+  std::println(reunpacked_point);
+  assert(point.x == reunpacked_point.x);
+  assert(point.y == reunpacked_point.y);
+  assert(repacked_point == packed_pub_key);
 }
 
 global MAX_ITER = 10;
