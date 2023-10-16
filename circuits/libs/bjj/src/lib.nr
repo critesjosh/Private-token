@@ -50,6 +50,8 @@ pub fn unpack_point(mut public_key: [u8; 32]) -> Gaffine
     sign = true;
     public_key[31] &= 0x7f;
   }
+  // this is where this differs from circomlibjs
+  // point.y in circomlib is montgomery, but the equation to derive x is still the TE curve one, not sure why
   point.y = from_rpr_le(public_key);
   // assert point.y < p
   assert(BigUint56::from_bytes(point.y.to_le_bytes(32))
@@ -74,6 +76,7 @@ pub fn unpack_point(mut public_key: [u8; 32]) -> Gaffine
 }
 
 // from here: https://github.com/iden3/circomlibjs/blob/4f094c5be05c1f0210924a3ab204d8fd8da69f49/src/babyjub.js#L97
+// This matches circomlibjs
 pub fn pack_point(public_key: Gaffine) -> [u8;32] {
   let mut array: [u8;32] = [0;32];
   let mut y = public_key.y.to_le_bytes(32);
@@ -93,6 +96,7 @@ pub fn pack_point(public_key: Gaffine) -> [u8;32] {
 
 // translated from here: https://github.com/iden3/ffjavascript/blob/d1cd4ae32170aedd000865f0828b78a15df6f06f/src/scalar.js#L215
 // and inspired by this: https://gist.github.com/signorecello/dad41f8b90ae48c7355bfd1f34f8885b
+// this just converts the buffer into a Field, the circomlibjs implementation also converts it to Montgomery
 fn from_rpr_le(public_key: [u8;32]) -> Field {
   let mut result : Field = 0;
   let mut v : Field = 1;
