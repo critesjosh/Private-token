@@ -5,3 +5,5 @@ authors = [""]
 compiler_version = "0.12.0"
 
 [dependencies]
+noir_bigint = { path = "../libs/biguint" }
+bjj = { path = "../libs/bjj" }

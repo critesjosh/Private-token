@@ -13,20 +13,19 @@ async function main() {
     const initial_balance = 100;
     const amount = 10;
 
-    console.log('private key', priv_key)
-    console.log('pub key', pub_key.y.toString(16))
-    console.log('pub key ARRAY', pub_key_array)
+    // console.log('private key', priv_key)
+    console.log('pub key', pub_key.x.toString(16), pub_key.y.toString(16))
+    // console.log('pub key ARRAY', pub_key_array)
 
     console.log(21888242871839275222246405745257275088548364400416034343698204186575808495617n.toString(16) > priv_key)
 
-    console.log('array length', pub_key_array[0].length)
+    // console.log('array length', pub_key_array[0].length)
 
 
     let packedPublicKey = babyjubjubUtils.packPublicKey(pub_key_array)
-    console.log('packed public key', packedPublicKey)
-    console.log('packed as hex', uint8ArrayToHexArray(packedPublicKey))
+    // console.log('packed public key', packedPublicKey)
+    // console.log('packed as hex', uint8ArrayToHexArray(packedPublicKey))
     let packedAsBigInt = uint8ArrayToBigInt(packedPublicKey);
-    console.log(21888242871839275222246405745257275088548364400416034343698204186575808495617n > packedAsBigInt);
     // The unpacked key is different than the original Public Key, 
     // but additional packing/unpacking will always produce the same
     // packed/unpacked key 
@@ -35,8 +34,8 @@ async function main() {
 
     const initial_balance_enc = babyjubjubUtils.exp_elgamal_encrypt(pub_key, initial_balance);
 
-    console.log("F half", (babyjubjubUtils.getF()).half)
-    console.log("pm1d2", babyjubjubUtils.getPm1d2())
+    // console.log("F half", (babyjubjubUtils.getF()).half)
+    // console.log("pm1d2", babyjubjubUtils.getPm1d2())
 
 }
 
