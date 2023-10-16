@@ -3,8 +3,8 @@ because solving the Discrete Log is needed during decryption
 It is the responsiblity of the smart contract developer to ensure 
 that all plaintexts are in the u40 range before encryption
 */
-// use dep::std::ec::tecurve::affine::Curve as AffineCurve;
-// use dep::std::ec::tecurve::affine::Point as Gaffine;
+use dep::std::ec::tecurve::affine::Curve as AffineCurve;
+use dep::std::ec::tecurve::affine::Point as Gaffine;
 use dep::std::collections::vec::Vec;
 use dep::std;
 use dep::noir_bigint::BigUint56;

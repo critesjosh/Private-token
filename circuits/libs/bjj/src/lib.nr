@@ -14,7 +14,7 @@ global pm1d2           = 1094412143591963761112320287262863754427418220020801717
 // from here: https://github.com/iden3/circomlibjs/blob/4f094c5be05c1f0210924a3ab204d8fd8da69f49/src/babyjub.js#L11C37-L11C114
 global p = 21888242871839275222246405745257275088548364400416034343698204186575808495617;
 
-pub fn priv_to_pub_key(private_key: Field) -> Gaffine
+fn priv_to_pub_key(private_key: Field) -> Gaffine
 {
  // Define Baby Jubjub (ERC-2494) parameters in affine representation
  let bjj_affine: AffineCurve = AffineCurve::new(bjj_a, bjj_d, Gaffine::new(bjj_generator_x, bjj_generator_y));
@@ -22,7 +22,7 @@ pub fn priv_to_pub_key(private_key: Field) -> Gaffine
  bjj_affine.mul(private_key, base_pt)
 }
 
-pub fn exp_elgamal_encrypt(public_key: Gaffine, plaintext: u40, randomness: Field) -> (Gaffine,Gaffine) // same notations as in https://en.wikipedia.org/wiki/ElGamal_encryption 
+fn exp_elgamal_encrypt(public_key: Gaffine, plaintext: u40, randomness: Field) -> (Gaffine,Gaffine) // same notations as in https://en.wikipedia.org/wiki/ElGamal_encryption 
 {
  let bjj_affine: AffineCurve = AffineCurve::new(bjj_a, bjj_d, Gaffine::new(bjj_generator_x, bjj_generator_y));
  let base_pt: Gaffine = Gaffine::new(bjj_basept_x, bjj_basept_y);
@@ -33,7 +33,7 @@ pub fn exp_elgamal_encrypt(public_key: Gaffine, plaintext: u40, randomness: Fiel
  (C1,C2)
 }
 
-pub fn exp_elgamal_decrypt(private_key : Field, ciphertext: (Gaffine,Gaffine)) -> Gaffine
+fn exp_elgamal_decrypt(private_key : Field, ciphertext: (Gaffine,Gaffine)) -> Gaffine
 {
  let bjj_affine: AffineCurve = AffineCurve::new(bjj_a, bjj_d, Gaffine::new(bjj_generator_x,bjj_generator_y));
  let shared_secret = bjj_affine.mul(private_key,ciphertext.0);
@@ -42,7 +42,7 @@ pub fn exp_elgamal_decrypt(private_key : Field, ciphertext: (Gaffine,Gaffine)) -
 }
 
 // translated from here: https://github.com/iden3/circomlibjs/blob/4f094c5be05c1f0210924a3ab204d8fd8da69f49/src/babyjub.js#L108
-pub fn unpack_point(mut public_key: [u8; 32]) -> Gaffine 
+fn unpack_point(mut public_key: [u8; 32]) -> Gaffine 
 {
   let mut point: Gaffine = Gaffine::new(0,0);
   let mut sign = false;
@@ -77,7 +77,7 @@ pub fn unpack_point(mut public_key: [u8; 32]) -> Gaffine
 
 // from here: https://github.com/iden3/circomlibjs/blob/4f094c5be05c1f0210924a3ab204d8fd8da69f49/src/babyjub.js#L97
 // This matches circomlibjs
-pub fn pack_point(public_key: Gaffine) -> [u8;32] {
+fn pack_point(public_key: Gaffine) -> [u8;32] {
   let mut array: [u8;32] = [0;32];
   let mut y = public_key.y.to_le_bytes(32);
   for i in 0..32 {
