@@ -48,7 +48,7 @@ impl BigUint56 {
     }
 
     // Constructs a BigUint56 from a byte array. Assumes that the byte array is little-endian.
-    pub fn from_bytes(bytes: [u8]) -> Self {
+    fn from_bytes(bytes: [u8]) -> Self {
         // TODO: Do I need this check?
         assert(bytes.len() as u56 <= MAX_BYTES as u56);
 

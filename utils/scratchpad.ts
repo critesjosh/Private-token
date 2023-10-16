@@ -14,7 +14,7 @@ async function main() {
     const amount = 10;
 
     console.log('private key', priv_key)
-    console.log('pub key', pub_key)
+    console.log('pub key', pub_key.y.toString(16))
     console.log('pub key ARRAY', pub_key_array)
 
     console.log(21888242871839275222246405745257275088548364400416034343698204186575808495617n.toString(16) > priv_key)

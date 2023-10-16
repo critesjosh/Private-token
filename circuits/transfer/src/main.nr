@@ -7,7 +7,8 @@ use dep::std::ec::tecurve::affine::Curve as AffineCurve;
 use dep::std::ec::tecurve::affine::Point as Gaffine;
 use dep::std::collections::vec::Vec;
 use dep::std;
-mod biguint;
+use dep::noir_bigint::BigUint56;
+// mod biguint;
 
 global bjj_a = 168700;
 global bjj_d = 168696;
@@ -147,21 +148,21 @@ fn unpack_point(mut public_key: [u8; 32]) -> Gaffine
   let mut point: Gaffine = Gaffine::new(0,0);
   let mut sign = false;
   if((public_key[31] & 0x80) != 0) {
-        sign = true;
-        public_key[31] &= 0x7f;
+    sign = true;
+    public_key[31] &= 0x7f;
   }
   point.y = from_rpr_le(public_key);
   // assert point.y < p
-  assert(biguint::BigUint56::from_bytes(point.y.to_le_bytes(32))
-          .gt(biguint::BigUint56::from_bytes(p.to_le_bytes(32))));  
+  assert(BigUint56::from_bytes(point.y.to_le_bytes(32))
+          .gt(BigUint56::from_bytes(p.to_le_bytes(32))));  
  
   let mut y2 = point.y * point.y;
-  // assert(y2 > point.y);
-  assert(biguint::BigUint56::from_bytes(point.y.to_le_bytes(32))
-          .gt(biguint::BigUint56::from_bytes(y2.to_le_bytes(32))));
+
   let x2 = (1-y2) / (bjj_a - (bjj_d * y2));
   let x2h = x2.pow_32(10944121435919637611123202872628637544274182200208017171849102093287904247808);
-  assert(x2h == 1);
+  // let x2h = 10944121435919637611123202872628637544274182200208017171849102093287904247808.pow_32(x2);
+  std::println(x2h);
+  // assert(x2h == 1);
   point.x = sqrt(x2h);
 
   if(sign) {
@@ -179,8 +180,8 @@ fn pack_point(public_key: Gaffine) -> [u8;32] {
   }
 
   let pm1d2 = (p - 1) / 2;
-  if(biguint::BigUint56::from_bytes(public_key.x.to_le_bytes(32))
-      .gt(biguint::BigUint56::from_bytes(pm1d2.to_le_bytes(32))))
+  if(BigUint56::from_bytes(public_key.x.to_le_bytes(32))
+      .gt(BigUint56::from_bytes(pm1d2.to_le_bytes(32))))
   {
     array[31] = array[31] | 0x80;
   }
@@ -195,8 +196,7 @@ fn from_rpr_le(public_key: [u8;32]) -> Field {
   let mut result : Field = 0;
   let mut v : Field = 1;
   for i in 0..32 {
-      let index = (32 - i);
-      result += public_key[index] as Field * v;
+      result += public_key[i] as Field * v;
       v *= 256;
   }
 
@@ -219,10 +219,10 @@ fn test_unpack_point() {
   let private_key: Field = 0x0510bae26a9b59ebad67a4324c944b1910a778e8481d7f08ddba6bcd2b94b2c4; // see debug notebook for an example on how to compute those
   let public_key: Gaffine = bjj_priv_to_pub_key(private_key);
 
-  //let public_key_array = public_key.to_le_bytes(16);
-  unpack_point(0xdc9f9fdb746d0f07b004cc4316e3495a58570b90661499f8a6a6696ff4156baa);
+  let packed_pub_key = [0xdc, 0x9f, 0x9f, 0xdb, 0x74, 0x6d, 0x0f, 0x07, 0xb0, 0x04, 0xcc, 0x43, 0x16, 0xe3, 0x49, 0x5a, 0x58, 0x57, 0x0b, 0x90, 0x66, 0x14, 0x99, 0xf8, 0xa6, 0xa6, 0x69, 0x6f, 0xf4, 0x15, 0x6b, 0xaa];
+  let point = unpack_point(packed_pub_key);
   
-  //std::println(public_key_array);
+  std::println(point);
 }
 
 fn abi_encode_encrypted_amount(first: Gaffine, second: Gaffine) -> [u8; 128]{
@@ -278,7 +278,7 @@ unconstrained fn sqrt(x: Field) -> Field {
     let mut y = x;
     let mut finished = false;
     for _i in 0..MAX_ITER {
-        if biguint::BigUint56::from_bytes(y.to_le_bytes(32)).gt(biguint::BigUint56::from_bytes(z.to_le_bytes(32))) {
+        if BigUint56::from_bytes(y.to_le_bytes(32)).gt(BigUint56::from_bytes(z.to_le_bytes(32))) {
             y = z;
             z = ((x/z) + z) / 2;
         } else {

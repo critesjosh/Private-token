@@ -1,0 +1,3 @@
+[workspace]
+members = ["circuits/transfer", "circuits/lock"]
+default-member = "circuits/transfer"
