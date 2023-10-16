@@ -36,15 +36,12 @@ fn main(private_key: Field,
         encrypted_amount_2: pub Gaffine,
         balance_new_me_encrypted_1: pub Gaffine, 
         balance_new_me_encrypted_2: pub Gaffine, 
-    ) 
-    { 
+    ){ 
     let computed_public_key = bjj::priv_to_pub_key(private_key);
-    // pack
+    let unpacked_sender_pub_key = bjj::unpack_point(sender_pub_key);
+    assert(computed_public_key == unpacked_sender_pub_key);
+    let unpacked_recipient_pub_key = bjj::unpack_point(recipient_pub_key);
 
-    // check that the sender really owns the private key corresponding to his public key
-
-    // TODO: convert computed_public_key to packed as [u8;32] and compare with sender_pub_key 
-    // assert((sender_pub_key == computed_public_key) & (sender_pub_key == computed_public_key));
     // the sender must have sufficient balance
     assert(value<=balance_old_me_clear); 
     /* this is to deter potential front-running issue: ref https://crypto.stanford.edu/~buenz/papers/zether.pdf §3.1. 
@@ -58,28 +55,25 @@ fn main(private_key: Field,
     */
     assert(value>=1); 
 
-    // can be removed with packed public keys
-    // assert(std::hash::poseidon::bn254::hash_2([recipient_pub_key.x, recipient_pub_key.y]) == account_address);
-
     let bjj_affine: AffineCurve = AffineCurve::new(bjj_a, bjj_d, Gaffine::new(bjj_generator_x, bjj_generator_y));
     let base_pt: Gaffine = Gaffine::new(bjj_basept_x, bjj_basept_y);
     let embedded_balance_old_me_clear = bjj_affine.mul(balance_old_me_clear as Field, base_pt);
     let decoded_value = bjj::exp_elgamal_decrypt(private_key, (balance_old_me_encrypted_1,balance_old_me_encrypted_2));
     // check that unencrypted balance of sender really corresponds to his encrypted balance
     assert((decoded_value.x == embedded_balance_old_me_clear.x) & (decoded_value.y == embedded_balance_old_me_clear.y)); 
-
-    // let balance_new_me_encrypted_computed = bjj_exp_elgamal_encrypt(sender_pub_key, balance_old_me_clear - value - process_fee - relay_fee, randomness);
+ 
+    let balance_new_me_encrypted_computed = bjj::exp_elgamal_encrypt(unpacked_sender_pub_key, balance_old_me_clear - value - process_fee - relay_fee, randomness);
     // // checks that the new encrypted balance of sender is correct
-    // assert((balance_new_me_encrypted_computed.0.x==balance_new_me_encrypted_1.x) & 
-    //         (balance_new_me_encrypted_computed.0.y==balance_new_me_encrypted_1.y) & 
-    //         (balance_new_me_encrypted_computed.1.x==balance_new_me_encrypted_2.x) & 
-    //         (balance_new_me_encrypted_computed.1.y==balance_new_me_encrypted_2.y)); 
+    assert((balance_new_me_encrypted_computed.0.x==balance_new_me_encrypted_1.x) & 
+            (balance_new_me_encrypted_computed.0.y==balance_new_me_encrypted_1.y) & 
+            (balance_new_me_encrypted_computed.1.x==balance_new_me_encrypted_2.x) & 
+            (balance_new_me_encrypted_computed.1.y==balance_new_me_encrypted_2.y)); 
     // // check that the amount being transferred is correctly encrypted
-    // let encrypted_amount_computed = bjj_exp_elgamal_encrypt(recipient_pub_key, value, randomness);
-    // assert((encrypted_amount_computed.0.x == encrypted_amount_1.x) &
-    //         (encrypted_amount_computed.0.y == encrypted_amount_1.y) &
-    //         (encrypted_amount_computed.1.x == encrypted_amount_2.x) &
-    //         (encrypted_amount_computed.1.y == encrypted_amount_2.y));
+    let encrypted_amount_computed = bjj::exp_elgamal_encrypt(unpacked_recipient_pub_key, value, randomness);
+    assert((encrypted_amount_computed.0.x == encrypted_amount_1.x) &
+            (encrypted_amount_computed.0.y == encrypted_amount_1.y) &
+            (encrypted_amount_computed.1.x == encrypted_amount_2.x) &
+            (encrypted_amount_computed.1.y == encrypted_amount_2.y));
     }
 
 // Because of a bug in Noir 10.3, this test will cause a stack overflow error, but you can check that it passes via `nargo prove` instead of `nargo test`: the values inside Prover.toml are strictly equivalent to this test
@@ -93,10 +87,15 @@ fn test_main() {
 
     // public values
     let sender_pub_key: Gaffine = bjj::priv_to_pub_key(private_key);
+    let packed_sender_pub_key = bjj::pack_point(sender_pub_key);
     let recipient_pub_key: Gaffine = bjj::priv_to_pub_key(2397698694665525209403000085013646741088197704326090841842743616643093564368); // bjj_priv_to_pub_key(private_key_to)
+    let packed_recipient_pub_key = bjj::pack_point(recipient_pub_key);
     let process_fee: u40 = 5;
     let relay_fee: u40 = 5;
-    // let nonce = std::hash::keccak256(abi_encode_encrypted_amount(balance_new_me_encrypted_1, balance_new_me_encrypted_2), 128);
+    
+    let encrypted_amount = bjj::exp_elgamal_encrypt(recipient_pub_key, value - process_fee - relay_fee, randomness);
+    let nonce = std::hash::keccak256(abi_encode_encrypted_amount(encrypted_amount.0, encrypted_amount.1), 128);
+
     // let balance_old_me_encrypted : (Gaffine,Gaffine) = bjj_exp_elgamal_encrypt(public_key_me, balance_old_me_clear, 1223911427385630814994881905088740515414339792865684838215099796087690786721);
     // let balance_old_to_encrypted : (Gaffine,Gaffine) = bjj_exp_elgamal_encrypt(public_key_to, 42, 1391605116707840153256607813912547565986654451413670922768018807428594876790);
     // let balance_new_me_encrypted : (Gaffine,Gaffine) = bjj_exp_elgamal_encrypt(public_key_me, 9900, randomness1);
