@@ -25,8 +25,7 @@ fn main(// All Public inputs, this can be executed by anyone
     ) { 
 
     // check that new balance = the balance_old_me_clear - fee
-
-    let bjj_affine: AffineCurve = AffineCurve::new(bjj_a, bjj_d, Gaffine::new(bjj_generator_x, bjj_generator_y));
+    let bjj_affine = bjj::get_affine_curve();
     
     let mut encrypted_value_sum = (encrypted_values[0], encrypted_values[1]);
 

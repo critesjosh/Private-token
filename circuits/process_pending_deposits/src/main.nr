@@ -37,7 +37,7 @@ fn main(
 
     assert(std::hash::poseidon::bn254::hash_2([public_key_to.x, public_key_to.y]) == account_address);
 
-    let bjj_affine: AffineCurve = AffineCurve::new(bjj_a, bjj_d, Gaffine::new(bjj_generator_x, bjj_generator_y));
+    let bjj_affine = bjj::get_affine_curve();
     
     let mut encrypted_amount = bjj::exp_elgamal_encrypt(public_key_to, amountSum, randomness);
 

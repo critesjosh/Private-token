@@ -14,18 +14,26 @@ global pm1d2           = 1094412143591963761112320287262863754427418220020801717
 // from here: https://github.com/iden3/circomlibjs/blob/4f094c5be05c1f0210924a3ab204d8fd8da69f49/src/babyjub.js#L11C37-L11C114
 global p = 21888242871839275222246405745257275088548364400416034343698204186575808495617;
 
+fn get_affine_curve() -> AffineCurve {
+  AffineCurve::new(bjj_a, bjj_d, Gaffine::new(bjj_generator_x, bjj_generator_y))
+}
+
+fn get_base_point() -> Gaffine {
+  Gaffine::new(bjj_basept_x, bjj_basept_y)
+}
+
 fn priv_to_pub_key(private_key: Field) -> Gaffine
 {
  // Define Baby Jubjub (ERC-2494) parameters in affine representation
- let bjj_affine: AffineCurve = AffineCurve::new(bjj_a, bjj_d, Gaffine::new(bjj_generator_x, bjj_generator_y));
- let base_pt: Gaffine = Gaffine::new(bjj_basept_x, bjj_basept_y);
+ let bjj_affine = get_affine_curve();
+ let base_pt = get_base_point();
  bjj_affine.mul(private_key, base_pt)
 }
 
 fn exp_elgamal_encrypt(public_key: Gaffine, plaintext: u40, randomness: Field) -> (Gaffine,Gaffine) // same notations as in https://en.wikipedia.org/wiki/ElGamal_encryption 
 {
- let bjj_affine: AffineCurve = AffineCurve::new(bjj_a, bjj_d, Gaffine::new(bjj_generator_x, bjj_generator_y));
- let base_pt: Gaffine = Gaffine::new(bjj_basept_x, bjj_basept_y);
+ let bjj_affine = get_affine_curve();
+ let base_pt = get_base_point();
  let C1: Gaffine = bjj_affine.mul(randomness, base_pt);
  let plain_embedded: Gaffine = bjj_affine.mul(plaintext as Field, base_pt);
  let shared_secret: Gaffine = bjj_affine.mul(randomness, public_key);
@@ -35,7 +43,7 @@ fn exp_elgamal_encrypt(public_key: Gaffine, plaintext: u40, randomness: Field) -
 
 fn exp_elgamal_decrypt(private_key : Field, ciphertext: (Gaffine,Gaffine)) -> Gaffine
 {
- let bjj_affine: AffineCurve = AffineCurve::new(bjj_a, bjj_d, Gaffine::new(bjj_generator_x,bjj_generator_y));
+ let bjj_affine = get_affine_curve();
  let shared_secret = bjj_affine.mul(private_key,ciphertext.0);
  let plain_embedded = bjj_affine.subtract(ciphertext.1,shared_secret);
  plain_embedded
