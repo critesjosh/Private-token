@@ -29,6 +29,10 @@ Cons:
 - Deposits and transfers are a 2 step process. This allows multiple people to send the same account funds in the same block, but requires a processing step. Senders can incentivize the process of this step so it still feels like a 1 step process. 
 - limit of ~1 trillion tokens per contract (~11 billion if using 2 decimals)
 
+Sequence Diagram:
+
+![private token sequence](PrivateTokenSequence.svg)
+
 The current model is the following:
 
 After the deployment of the new Private Token, transfers between users can occur. 
