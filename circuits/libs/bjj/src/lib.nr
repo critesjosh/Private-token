@@ -220,19 +220,3 @@ fn test_encrypt_packed(){
   assert(decrypted_with_unpacked.x == embedded_x.x);
   assert(decrypted_with_unpacked.y == embedded_x.y);
 }
-
-fn toMontgomery(y: Field) -> Gaffine {
-  let u = (1+y) / (1-y);
-  let v2 = u.pow_32(3) + 168698 * u.pow_32(2) + u;
-  let v = sqrt(v2);
-  Gaffine::new(u, v)
-}
-
-fn fromMontgomery(u: Field)-> Gaffine{
-  let y = (u-1)/(u+1);
-  let mut y2 = y * y;
-  let x2 = (1-y2) / (bjj_a - (bjj_d * y2));
-  let x2h = x2.pow_32(pm1d2);
-  let x = sqrt(x2h);
-  Gaffine::new(x,y)
-}
