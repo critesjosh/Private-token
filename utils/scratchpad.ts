@@ -24,13 +24,15 @@ async function main() {
 
     let packedPublicKey = babyjubjubUtils.packPublicKey(pub_key_array)
     // console.log('packed public key', packedPublicKey)
-    // console.log('packed as hex', uint8ArrayToHexArray(packedPublicKey))
-    let packedAsBigInt = uint8ArrayToBigInt(packedPublicKey);
+    console.log('packed as hex', uint8ArrayToHexArray(packedPublicKey))
     // The unpacked key is different than the original Public Key, 
     // but additional packing/unpacking will always produce the same
     // packed/unpacked key 
     let unpackedKey = babyjubjubUtils.unpackPoint(packedPublicKey)
     console.log('unpacked pub key', unpackedKey)
+    console.log('packed and unpacked points match',
+        compareUint8Arrays(unpackedKey[0], bigintToUint8Array(pub_key.x)) &&
+        compareUint8Arrays(unpackedKey[1], bigintToUint8Array(pub_key.y)))
 
     const initial_balance_enc = babyjubjubUtils.exp_elgamal_encrypt(pub_key, initial_balance);
 
@@ -52,6 +54,15 @@ function bigintToUint8Array(bigint: bigint) {
     return uint8Array;
 }
 
+function compareUint8Arrays(a: Uint8Array, b: Uint8Array): boolean {
+    if (a.length !== b.length) return false;
+
+    for (let i = 0; i < a.length; i++) {
+        if (a[i] !== b[i]) return false;
+    }
+
+    return true;
+}
 
 function uint8ArrayToBigInt(bytes: Uint8Array) {
     // Convert Uint8Array to a hexadecimal string
@@ -70,6 +81,10 @@ function uint8ArrayToHexArray(uint8Array: Uint8Array) {
     }
 
     return hexArray;
+}
+
+function uint8ArrayToHex(buffer: Uint8Array): string {
+    return Array.from(buffer).map(byte => byte.toString(16).padStart(2, '0')).join('');
 }
 
 main();

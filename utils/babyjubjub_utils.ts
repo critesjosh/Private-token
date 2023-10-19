@@ -152,12 +152,13 @@ export function packPublicKey(P1: Point) {
 }
 
 export function unpackPoint(point: Uint8Array): Point {
-    // let montgomeryForm: [Uint8Array, Uint8Array] = [
-    //     babyJub.F.toMontgomery(babyJub.F.e(point[0])).reverse(),
-    //     babyJub.F.toMontgomery(babyJub.F.e(point[1])).reverse()
-    // ]
 
-    return babyJub.unpackPoint(point);
+    let p = babyJub.unpackPoint(point);
+
+    return [
+        babyJub.F.fromMontgomery(babyJub.F.e(p[0])).reverse(),
+        babyJub.F.fromMontgomery(babyJub.F.e(p[1])).reverse()
+    ]
 }
 // Tests (Uncomment and then run `node babyjubjub_utils.js` to test)
 /*
