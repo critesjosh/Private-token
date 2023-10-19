@@ -106,13 +106,14 @@ fn pack_point(public_key: Gaffine) -> [u8;32] {
 // and inspired by this: https://gist.github.com/signorecello/dad41f8b90ae48c7355bfd1f34f8885b
 // this just converts the buffer into a Field, the circomlibjs implementation also converts it to Montgomery
 fn from_rpr_le(public_key: [u8;32]) -> Field {
-  let mut result : Field = 0;
+  let mut y : Field = 0;
   let mut v : Field = 1;
   for i in 0..32 {
-      result += public_key[i] as Field * v;
+      y += public_key[i] as Field * v;
       v *= 256;
   }
-  result
+  // (1+y) / (1-y)
+  y
 }
 
 #[test]
@@ -161,4 +162,46 @@ unconstrained fn sqrt(x: Field) -> Field {
     }
     assert(finished);
     y
+}
+
+#[test]
+fn test_encrypt_packed(){
+  let x: u40 = 5;
+  let bjj_affine = get_affine_curve();
+  let base_pt = get_base_point();
+  let embedded_x = bjj_affine.mul(x as Field, base_pt);
+
+  let private_key: Field = 0x0510bae26a9b59ebad67a4324c944b1910a778e8481d7f08ddba6bcd2b94b2c4;
+  let pub_key: Gaffine = priv_to_pub_key(private_key);
+
+  let encrypted_point = exp_elgamal_encrypt(pub_key, x, 1);
+  let decrypted_point = exp_elgamal_decrypt(private_key, encrypted_point);
+
+  // assert(decrypted_point.x == embedded_x.x);
+  // assert(decrypted_point.y == embedded_x.y);
+
+  // let packed = pack_point(pub_key);
+  // let unpacked = unpack_point(packed);
+
+  // let encrypted_with_unpacked = exp_elgamal_encrypt(unpacked, x, 1);
+  // let decrypted_with_unpacked = exp_elgamal_decrypt(private_key, encrypted_with_unpacked);
+
+  // assert(decrypted_with_unpacked.x == embedded_x.x);
+  // assert(decrypted_with_unpacked.y == embedded_x.y);
+}
+
+fn toMontgomery(y: Field) -> Gaffine {
+  let u = (1+y) / (1-y);
+  let v2 = u.pow_32(3) + 168698 * u.pow_32(2) + u;
+  let v = sqrt(v2);
+  Gaffine::new(u, v)
+}
+
+fn fromMontgomery(u: Field)-> Gaffine{
+  let y = (u-1)/(u+1);
+  let mut y2 = y * y;
+  let x2 = (1-y2) / (bjj_a - (bjj_d * y2));
+  let x2h = x2.pow_32(pm1d2);
+  let x = sqrt(x2h);
+  Gaffine::new(x,y)
 }
