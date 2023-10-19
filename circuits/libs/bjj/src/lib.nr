@@ -50,7 +50,8 @@ fn exp_elgamal_decrypt(private_key : Field, ciphertext: (Gaffine,Gaffine)) -> Ga
 }
 
 // translated from here: https://github.com/iden3/circomlibjs/blob/4f094c5be05c1f0210924a3ab204d8fd8da69f49/src/babyjub.js#L108
-fn unpack_point(mut public_key: [u8; 32]) -> Gaffine 
+// another ref: https://github.com/iden3/go-iden3-crypto/blob/master/babyjub/babyjub.go#L250
+pub fn unpack_point(mut public_key: [u8; 32]) -> Gaffine 
 {
   let mut point: Gaffine = Gaffine::new(0,0);
   let mut sign = false;
@@ -65,21 +66,18 @@ fn unpack_point(mut public_key: [u8; 32]) -> Gaffine
   assert(BigUint56::from_bytes(point.y.to_le_bytes(32))
           .gt(BigUint56::from_bytes(p.to_le_bytes(32))));  
  
-
-  // std::println(point.y);
-
   let mut y2 = point.y * point.y;
 
-  // std::println(y2);
+  let xa = 1-y2;
+  let xb = bjj_a - (bjj_d * y2);
 
-  let x2 = (1-y2) / (bjj_a - (bjj_d * y2));
-  let x2h = x2.pow_32(pm1d2);
-  // assert(x2h == 1); // this is failing
-  point.x = sqrt(x2h);
+  let x2 = xa / xb;
+  point.x = sqrt(x2);
+  // assert(point.x * point.x == x2);
 
-  if(sign) {
-    point.x = p - point.x;
-  } 
+  // if(sign) {
+  //   point.x = p - point.x;
+  // } 
   point
 }
 
@@ -112,7 +110,6 @@ fn from_rpr_le(public_key: [u8;32]) -> Field {
       y += public_key[i] as Field * v;
       v *= 256;
   }
-  // (1+y) / (1-y)
   y
 }
 
@@ -147,21 +144,55 @@ fn test_unpack_point() {
   assert(repacked_point == packed_pub_key);
 }
 
-global MAX_ITER = 10;
-unconstrained fn sqrt(x: Field) -> Field {
-    let mut z = (x+1) / 2;
-    let mut y = x;
-    let mut finished = false;
-    for _i in 0..MAX_ITER {
-        if BigUint56::from_bytes(y.to_le_bytes(32)).gt(BigUint56::from_bytes(z.to_le_bytes(32))) {
-            y = z;
-            z = ((x/z) + z) / 2;
-        } else {
-            finished = true;
-        }
+// Field-dependent constants for Tonelli-Shanks algorithm (see sqrt function below)
+// TODO: Possibly make this built-in.
+// https://github.com/noir-lang/noir/blob/6e2ff3012164e7afddb4ab17afa214d47ecd78d5/noir_stdlib/src/ec.nr
+global C1 = 28;
+global C3 = 40770029410420498293352137776570907027550720424234931066070132305055;
+global C5 = 19103219067921713944291392827692070036145651957329286315305642004821462161904;
+
+// Power function of two Field arguments of arbitrary size.
+// Adapted from std::field::pow_32.
+#[builtin(modulus_num_bits)]
+pub fn modulus_num_bits() -> Field {}
+
+pub fn pow(x: Field, y: Field) -> Field { // As in tests with minor modifications
+    let N_BITS = modulus_num_bits();
+
+    let mut r = 1 as Field;
+    let b = y.to_le_bits(N_BITS as u32);
+      
+    for i in 0..N_BITS {
+        r *= r;
+        r *= (b[N_BITS - 1 - i] as Field)*x + (1-b[N_BITS - 1 - i] as Field);
     }
-    assert(finished);
-    y
+    r
+}
+
+fn sqrt(x: Field) -> Field {
+    let mut z = pow(x, C3);
+    let mut t = z*z*x;
+    z *= x;
+    let mut b = t;
+    let mut c = C5;
+ 
+    for i in 0..(C1-1) {
+        for _j in 1..(C1-i-1) {
+            b *= b;
+        }
+        z *= if b == 1 { 1 } else { c };
+        c *= c;
+        t *= if b == 1 { 1 } else { c };
+        b = t;
+    }
+    
+    z
+}
+
+#[test]
+fn test_sqrt(){
+  let x = 9;
+  assert(sqrt(x*x) == x);
 }
 
 #[test]
@@ -177,17 +208,17 @@ fn test_encrypt_packed(){
   let encrypted_point = exp_elgamal_encrypt(pub_key, x, 1);
   let decrypted_point = exp_elgamal_decrypt(private_key, encrypted_point);
 
-  // assert(decrypted_point.x == embedded_x.x);
-  // assert(decrypted_point.y == embedded_x.y);
+  assert(decrypted_point.x == embedded_x.x);
+  assert(decrypted_point.y == embedded_x.y);
 
-  // let packed = pack_point(pub_key);
-  // let unpacked = unpack_point(packed);
+  let packed = pack_point(pub_key);
+  let unpacked = unpack_point(packed);
 
-  // let encrypted_with_unpacked = exp_elgamal_encrypt(unpacked, x, 1);
-  // let decrypted_with_unpacked = exp_elgamal_decrypt(private_key, encrypted_with_unpacked);
+  let encrypted_with_unpacked = exp_elgamal_encrypt(unpacked, x, 1);
+  let decrypted_with_unpacked = exp_elgamal_decrypt(private_key, encrypted_with_unpacked);
 
-  // assert(decrypted_with_unpacked.x == embedded_x.x);
-  // assert(decrypted_with_unpacked.y == embedded_x.y);
+  assert(decrypted_with_unpacked.x == embedded_x.x);
+  assert(decrypted_with_unpacked.y == embedded_x.y);
 }
 
 fn toMontgomery(y: Field) -> Gaffine {
