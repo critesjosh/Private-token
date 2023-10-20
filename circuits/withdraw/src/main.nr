@@ -22,7 +22,7 @@ fn main(private_key: Field,
 
         // Public Inputs
         nonce: pub Field,
-        public_key: pub Gaffine, 
+        packed_public_key: pub [u8;32], 
         value: pub u40, 
         relay_fee: pub u40,
         balance_old_encrypted_1: pub Gaffine, 
@@ -36,6 +36,7 @@ fn main(private_key: Field,
     let decoded_value = bjj::exp_elgamal_decrypt(private_key, (balance_old_encrypted_1,balance_old_encrypted_2));
     // check that unencrypted balance of withdrawer really corresponds to his encrypted balance
     assert((decoded_value.x == embedded_balance_old_me_clear.x) & (decoded_value.y == embedded_balance_old_me_clear.y)); 
+    let public_key = bjj::unpack_point(packed_public_key);
     // we encrypt the minted value with the minter's public key
     let new_balance_encrypted_computed = bjj::exp_elgamal_encrypt(public_key, balance_old_clear - value - relay_fee, randomness);
     assert((new_balance_encrypted_computed.0.x == balance_new_encrypted_1.x) & 
@@ -45,15 +46,21 @@ fn main(private_key: Field,
 }
 
 #[test]
-fn test_main() {
+fn test_withdraw() {
     // private values
-    // let private_key: Field = 2291123624948246627368989940774052753470489062495018070576418670157516550852; // see debug notebook for an example on how to compute those
-    // let randomness: Field = 168986485046885582825082387270879151100288537211746581237924789162159767775; // see debug notebook for an example on how to compute those
-    // let balance_old_me_clear : u40 = 100;
+    let private_key: Field = 2291123624948246627368989940774052753470489062495018070576418670157516550852; // see debug notebook for an example on how to compute those
+    let randomness: Field = 168986485046885582825082387270879151100288537211746581237924789162159767775; // see debug notebook for an example on how to compute those
+    let balance : u40 = 1000;
 
     // // public values
-    // let public_key: Gaffine = bjj_priv_to_pub_key(private_key);
-    // let value: Field = 1000000000000; // the message being encrypted, should be a u40
+    let public_key: Gaffine = bjj::priv_to_pub_key(private_key);
+    let packed_public_key = bjj::pack_point(public_key);
+    let value: u40 = 100; // the message being encrypted, should be a u40
+    let relay_fee: u40 = 1; // the relay fee, should be a u40
 
-    // main(private_key, randomness, balance_old_me_clear, public_key,value,balance_old_encrypted_1,balance_old_encrypted_2, balance_new_encrypted_computed.0, balance_new_encrypted_computed.1);  // checks that public_key is derived from private_key and returns encrypted value and most importantly that the encrpyted value, i.e (C1,C2), is correct
+    let old_encrypted_amount = bjj::exp_elgamal_encrypt(public_key, balance, randomness);
+    let new_encrypted_amount = bjj::exp_elgamal_encrypt(public_key, balance - value - relay_fee, randomness);
+    let nonce = 0; // compute in Solidity, keccak(encryped amt) % p
+
+    main(private_key, randomness, balance, nonce, packed_public_key,value,relay_fee,old_encrypted_amount.0,old_encrypted_amount.1,new_encrypted_amount.0,new_encrypted_amount.1);  
 }

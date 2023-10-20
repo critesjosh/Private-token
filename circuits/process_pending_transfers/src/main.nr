@@ -49,15 +49,18 @@ fn main(// All Public inputs, this can be executed by anyone
 // Because of a bug in Noir 10.3, this test will cause a stack overflow error, but you can check that it passes via `nargo prove` instead of `nargo test`: the values inside Prover.toml are strictly equivalent to this test
 #[test]
 fn test_main() {
-   
-    // public values
-    // let public_key_me: Gaffine = bjj_priv_to_pub_key(private_key);
-    // let public_key_to: Gaffine = bjj_priv_to_pub_key(2397698694665525209403000085013646741088197704326090841842743616643093564368); // bjj_priv_to_pub_key(private_key_to)
-    // let balance_old_me_encrypted : (Gaffine,Gaffine) = bjj_exp_elgamal_encrypt(public_key_me, balance_old_me_clear, 1223911427385630814994881905088740515414339792865684838215099796087690786721);
-    // let balance_old_to_encrypted : (Gaffine,Gaffine) = bjj_exp_elgamal_encrypt(public_key_to, 42, 1391605116707840153256607813912547565986654451413670922768018807428594876790);
-    // let balance_new_me_encrypted : (Gaffine,Gaffine) = bjj_exp_elgamal_encrypt(public_key_me, 9900, randomness1);
-    // let balance_new_to_encrypted : (Gaffine,Gaffine) = bjj_exp_elgamal_encrypt(public_key_to, 142, 1391605116707840153256607813912547565986654451413670922768018807428594876790+randomness2);
+    let private_key: Field = 2291123624948246627368989940774052753470489062495018070576418670157516550852; // see debug notebook for an example on how to compute those
+    let randomness: Field = 168986485046885582825082387270879151100288537211746581237924789162159767775; // see debug notebook for an example on how to compute those
+    let public_key: Gaffine = bjj::priv_to_pub_key(private_key);
+    let balance: u40 = 1000;
+    let old_encrypted_amount = bjj::exp_elgamal_encrypt(public_key, balance, randomness);
 
-    // main( public_key_to, balance_old_me_encrypted.0, balance_old_me_encrypted.1, balance_old_to_encrypted.0,
-    //  balance_old_to_encrypted.1, balance_new_me_encrypted.0, balance_new_me_encrypted.1, balance_new_to_encrypted.0,  balance_new_to_encrypted.1);
+
+    // public values
+    let old_balance = bjj::exp_elgamal_encrypt(public_key, balance, randomness);
+    let new_balance_encrypted = bjj::exp_elgamal_encrypt(public_key, balance+400, randomness);
+
+    let encryped_value = bjj::exp_elgamal_encrypt(public_key, 100, randomness);
+    let encryped_values = [encryped_value.0, encryped_value.1, encryped_value.0, encryped_value.1, encryped_value.0, encryped_value.1, encryped_value.0, encryped_value.1];
+    main(old_encrypted_amount.0, old_encrypted_amount.1, new_balance_encrypted.0, new_balance_encrypted.1, encryped_values);
 }

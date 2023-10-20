@@ -50,13 +50,8 @@ contract PrivateToken {
         uint40 fee;
     }
 
-    //
-    // struct PublicKey {
-    //     // We could pack those in a single uint256 to save storage costs (for e.g using circomlibjs library to pack points on BabyJubjub)
-    //     uint256 X;
-    //     uint256 Y;
-    // } // The Public Key should be a point on Baby JubJub elliptic curve : checks must be done offchain before registering to ensure that X<p and Y<p and (X,Y) is on the curve
-    // p = 21888242871839275222246405745257275088548364400416034343698204186575808495617 < 2**254
+    uint256 BjjPrime =
+        21888242871839275222246405745257275088548364400416034343698204186575808495617;
     IERC165 public immutable ERC165;
     ProcessDepositVerifier public immutable PROCESS_DEPOSIT_VERIFIER;
     ProcessTransferVerifier public immutable PROCESS_TRANSFER_VERIFIER;
@@ -272,6 +267,7 @@ contract PrivateToken {
                 _processFee,
                 block.timestamp
             );
+            pendingTransferNonces[_to] += 1;
         }
 
         bytes32[] memory publicInputs = new bytes32[](19);
@@ -279,7 +275,9 @@ contract PrivateToken {
         publicInputs[4] = bytes32(uint256(_processFee));
         publicInputs[5] = bytes32(uint256(_relayFee));
         // this nonce should be unique because it uses the randomness calculated in the encrypted balance
-        publicInputs[6] = bytes32(keccak256(abi.encode(_senderNewBalance)));
+        publicInputs[6] = bytes32(
+            uint256(keccak256(abi.encode(_senderNewBalance))) % BjjPrime
+        );
         publicInputs[7] = bytes32(oldBalance.C1x);
         publicInputs[8] = bytes32(oldBalance.C1y);
         publicInputs[9] = bytes32(oldBalance.C2x);
@@ -340,7 +338,9 @@ contract PrivateToken {
         EncryptedAmount memory oldEncryptedAmount = balances[_from];
         bytes32[] memory publicInputs = new bytes32[](11);
         // this nonce should be unique because it uses the randomness calculated in the encrypted balance
-        publicInputs[0] = bytes32(keccak256(abi.encode(_newEncryptedAmount)));
+        publicInputs[0] = bytes32(
+            uint256(keccak256(abi.encode(_newEncryptedAmount))) % BjjPrime
+        );
         publicInputs[1] = bytes32(_from);
         publicInputs[2] = bytes32(uint256(_amount));
         publicInputs[3] = bytes32(uint256(_relayFee));
@@ -562,10 +562,8 @@ contract PrivateToken {
         );
         // figure out actual function signature, this is just a placeholder
         require(
-            _lockToContract.supportsInterface(
-                0x80ac58cd,
-                "contract does not implement unlock"
-            )
+            _lockToContract.supportsInterface(0x80ac58cd),
+            "invalid contract"
         );
         lockedTo[_publicKey] = _lockToContract;
         EncryptedAmount memory oldEncryptedAmount = balances[_publicKey];

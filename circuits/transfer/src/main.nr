@@ -79,7 +79,7 @@ fn main(private_key: Field,
 
 // Because of a bug in Noir 10.3, this test will cause a stack overflow error, but you can check that it passes via `nargo prove` instead of `nargo test`: the values inside Prover.toml are strictly equivalent to this test
 #[test]
-fn test_main() {
+fn test_transfer() {
     // private values
     let private_key: Field = 2291123624948246627368989940774052753470489062495018070576418670157516550852; // see debug notebook for an example on how to compute those
     let randomness: Field = 168986485046885582825082387270879151100288537211746581237924789162159767775; // see debug notebook for an example on how to compute those
@@ -95,13 +95,14 @@ fn test_main() {
     let relay_fee: u40 = 5;
     
     let encrypted_amount = bjj::exp_elgamal_encrypt(recipient_pub_key, value - process_fee - relay_fee, randomness);
-    let nonce = std::hash::keccak256(abi_encode_encrypted_amount(encrypted_amount.0, encrypted_amount.1), 128);
+    let nonce = 5;
 
      let old_encrypted_balance : (Gaffine,Gaffine) = bjj::exp_elgamal_encrypt(sender_pub_key, old_balance, 1223911427385630814994881905088740515414339792865684838215099796087690786721);
      let new_balance_encrypted : (Gaffine,Gaffine) = bjj::exp_elgamal_encrypt(sender_pub_key, 9900, randomness);
 
 
-    main(private_key, randomness, value, 
+    main(private_key,randomness, 
+        value, 
         old_balance, 
         packed_sender_pub_key, 
         packed_recipient_pub_key,
